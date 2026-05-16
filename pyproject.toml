@@ -1,0 +1,31 @@
+[project]
+name = "my-agent"
+version = "0.0.0"
+description = "A from-scratch personal agent built for learning"
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=1.40",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.12",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+my-agent = "my_agent.cli.main:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+markers = ["integration: real-API tests, skipped by default"]
+addopts = "-m 'not integration'"
+testpaths = ["tests"]
