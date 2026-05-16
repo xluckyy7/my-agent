@@ -1,7 +1,7 @@
 import os
 from dataclasses import dataclass
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 
 @dataclass
@@ -13,7 +13,10 @@ class Config:
 
 
 def load_config() -> Config:
-    load_dotenv()
+    # usecwd=True so .env is found relative to where the user runs the tool,
+    # not relative to where this source file lives. Important for testability
+    # (chdir-based isolation works) and intuitive for users.
+    load_dotenv(find_dotenv(usecwd=True))
     api_key = os.environ.get("DASHSCOPE_API_KEY")
     if not api_key:
         raise RuntimeError(
