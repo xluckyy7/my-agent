@@ -1,6 +1,6 @@
 import pytest
 
-from my_agent.tools.files import read_file_tool
+from my_agent.tools.files import read_file_tool, write_file_tool
 
 
 def test_read_file_returns_text_content(tmp_path):
@@ -51,3 +51,62 @@ def test_read_file_via_registry_dispatch(tmp_path):
     res2 = reg.dispatch("read_file", '{"path": "/nope/missing"}')
     assert res2.is_error is True
     assert "FileNotFoundError" in res2.content
+
+
+# ---------------- write_file ----------------
+
+
+def test_write_file_creates_new(tmp_path):
+    target = tmp_path / "out.md"
+    out = write_file_tool.fn({"path": str(target), "content": "hello"})
+    assert "wrote" in out.lower()
+    assert "5 bytes" in out  # "hello" is 5 bytes
+    assert target.read_text() == "hello"
+
+
+def test_write_file_overwrites_existing(tmp_path):
+    target = tmp_path / "out.md"
+    target.write_text("old content")
+    write_file_tool.fn({"path": str(target), "content": "new"})
+    assert target.read_text() == "new"
+
+
+def test_write_file_creates_parent_dirs(tmp_path):
+    target = tmp_path / "deep" / "nested" / "file.txt"
+    write_file_tool.fn({"path": str(target), "content": "x"})
+    assert target.exists()
+    assert target.read_text() == "x"
+
+
+def test_write_file_unicode(tmp_path):
+    target = tmp_path / "u.txt"
+    write_file_tool.fn({"path": str(target), "content": "你好 🌏"})
+    assert target.read_text(encoding="utf-8") == "你好 🌏"
+
+
+def test_write_file_schema_shape():
+    s = write_file_tool.parameters
+    assert s["type"] == "object"
+    assert {"path", "content"} <= set(s["properties"].keys())
+    assert s["properties"]["path"]["type"] == "string"
+    assert s["properties"]["content"]["type"] == "string"
+    assert set(s["required"]) == {"path", "content"}
+
+
+def test_write_file_metadata():
+    assert write_file_tool.name == "write_file"
+    assert write_file_tool.description
+    assert callable(write_file_tool.fn)
+
+
+def test_write_file_via_registry_dispatch(tmp_path):
+    from my_agent.tools.base import ToolRegistry
+
+    reg = ToolRegistry()
+    reg.register(write_file_tool)
+
+    target = tmp_path / "z.md"
+    args = f'{{"path": "{target}", "content": "ok"}}'
+    res = reg.dispatch("write_file", args)
+    assert res.is_error is False
+    assert target.read_text() == "ok"
