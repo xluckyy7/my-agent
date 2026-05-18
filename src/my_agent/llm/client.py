@@ -1,10 +1,20 @@
 import json
 import os
 import sys
+from typing import Iterator
 
 import openai
 
-from .types import Message, Response, ToolCall
+from .types import (
+    FinishEvent,
+    Message,
+    Response,
+    TextDelta,
+    ToolCall,
+    ToolCallDelta,
+)
+
+StreamEvent = TextDelta | ToolCallDelta | FinishEvent
 
 DEBUG_ENV_VAR = "MY_AGENT_DEBUG"
 
@@ -77,3 +87,53 @@ class LLMClient:
             finish_reason=choice.finish_reason,
             raw=raw,
         )
+
+    def stream(
+        self,
+        messages: list[Message],
+        tools: list[dict],
+        max_tokens: int,
+    ) -> Iterator[StreamEvent]:
+        """Yield StreamEvents incrementally from a streaming chat completion.
+
+        The caller is responsible for accumulating events back into a Response
+        (see assemble_stream() for a reference implementation).
+        """
+        kwargs: dict = {
+            "model": self.model,
+            "messages": [m.to_api_dict() for m in messages],
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        if tools:
+            kwargs["tools"] = tools
+
+        if _debug_enabled():
+            _debug_dump("REQUEST(stream)", {k: v for k, v in kwargs.items() if k != "stream"})
+
+        chunks = self.client.chat.completions.create(**kwargs)
+
+        for chunk in chunks:
+            if not chunk.choices:
+                # Some providers emit usage-only chunks. Ignore.
+                continue
+            choice = chunk.choices[0]
+            delta = choice.delta
+
+            content = getattr(delta, "content", None)
+            if content:
+                yield TextDelta(text=content)
+
+            tool_calls = getattr(delta, "tool_calls", None) or []
+            for tc in tool_calls:
+                yield ToolCallDelta(
+                    index=tc.index,
+                    id=getattr(tc, "id", None),
+                    name=getattr(tc.function, "name", None) if tc.function else None,
+                    arguments_delta=(
+                        getattr(tc.function, "arguments", "") or "" if tc.function else ""
+                    ),
+                )
+
+            if choice.finish_reason is not None:
+                yield FinishEvent(finish_reason=choice.finish_reason)

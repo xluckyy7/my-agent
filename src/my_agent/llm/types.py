@@ -60,3 +60,45 @@ class Response:
     tool_calls: list[ToolCall] = field(default_factory=list)
     finish_reason: str = "stop"
     raw: dict = field(default_factory=dict)
+
+
+# ---------- Stream events (Iter 3) ----------
+#
+# Streaming yields these events instead of a single Response. The caller is
+# responsible for accumulating text and tool_calls; the helper assemble_events
+# below turns a full event sequence back into a Response, mirroring the
+# non-streaming send() return shape.
+
+
+@dataclass
+class TextDelta:
+    """Incremental text content from the model."""
+
+    text: str
+
+
+@dataclass
+class ToolCallDelta:
+    """Incremental tool call info.
+
+    The first chunk for a given tool call carries `id` and `name`. Subsequent
+    chunks for the same tool call (matched by `index`) typically have id=None
+    and name=None, only `arguments_delta` filled with a JSON-string fragment
+    that must be string-concatenated to previous deltas at the same index.
+    """
+
+    index: int
+    id: Optional[str]
+    name: Optional[str]
+    arguments_delta: str
+
+
+@dataclass
+class FinishEvent:
+    """Terminal event of a streaming response.
+
+    Always emitted exactly once at the end with the finish_reason
+    ("stop" / "tool_calls" / "length" / ...).
+    """
+
+    finish_reason: str
