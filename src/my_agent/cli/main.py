@@ -7,9 +7,8 @@ import sys
 import readline  # noqa: F401
 
 from my_agent.agent.conversation import Conversation
-from my_agent.agent.events import TurnTextDelta, TurnToolEnd, TurnToolStart
 from my_agent.agent.loop import AgentLoop
-from my_agent.cli.render import CYAN, DIM, GRAY, GREEN, RED, color, truncate
+from my_agent.cli.repl import Repl
 from my_agent.config import load_config
 from my_agent.llm.client import LLMClient
 from my_agent.tools.base import ToolRegistry
@@ -25,7 +24,7 @@ DEFAULT_SYSTEM_PROMPT = (
 
 
 def build_registry() -> ToolRegistry:
-    """Wire up the v0.3 tool set."""
+    """Wire up the v0.4 tool set."""
     reg = ToolRegistry()
     reg.register(read_file_tool)
     reg.register(write_file_tool)
@@ -33,50 +32,21 @@ def build_registry() -> ToolRegistry:
     return reg
 
 
-def _render_event(event) -> None:
-    """Print a single TurnEvent with appropriate styling."""
-    match event:
-        case TurnTextDelta(text=t):
-            print(t, end="", flush=True)
-        case TurnToolStart(name=name, arguments=args):
-            args_preview = truncate(args)
-            print(
-                "\n" + color(f"  ▸ {name} {args_preview}", CYAN + DIM),
-                flush=True,
-            )
-        case TurnToolEnd(name=name, content=content, is_error=err, duration_seconds=dur):
-            mark = "✗" if err else "✓"
-            tone = RED if err else GREEN
-            preview = truncate(content)
-            print(
-                color(f"    {mark} {dur:.2f}s {preview}", tone + DIM),
-                flush=True,
-            )
-
-
 def app() -> int:
     cfg = load_config()
     client = LLMClient(api_key=cfg.api_key, base_url=cfg.base_url, model=cfg.model)
     loop = AgentLoop(client=client, tools=build_registry(), max_tokens=cfg.max_tokens)
     conv = Conversation(system=DEFAULT_SYSTEM_PROMPT)
+    repl = Repl(loop=loop, conv=conv)
 
     prompt_arg = " ".join(sys.argv[1:]).strip()
     if prompt_arg:
-        user_input = prompt_arg
-    else:
-        prompt_label = color(">>> ", GRAY)
-        user_input = input(prompt_label).strip()
-    if not user_input:
+        # One-shot mode: process the argv prompt and exit.
+        repl.handle_input(prompt_arg)
         return 0
 
-    try:
-        for ev in loop.run_turn_stream(conv, user_input):
-            _render_event(ev)
-        print()  # final newline
-    except KeyboardInterrupt:
-        print(color("\n[interrupted]", RED), file=sys.stderr)
-        return 130
-    return 0
+    # Interactive REPL mode.
+    return repl.run()
 
 
 if __name__ == "__main__":
