@@ -1,5 +1,11 @@
 import sys
 
+# Side-effect import: enabling GNU readline / libedit so input() handles
+# multi-byte characters (Chinese, emoji) correctly when backspacing, and gets
+# arrow-key history for free. Without this, typing "写一个" then backspace
+# only deletes one byte and corrupts the display.
+import readline  # noqa: F401
+
 from my_agent.agent.conversation import Conversation
 from my_agent.agent.loop import AgentLoop
 from my_agent.config import load_config
