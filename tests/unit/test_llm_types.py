@@ -55,3 +55,39 @@ def test_toolcall_to_api_dict():
         "type": "function",
         "function": {"name": "echo", "arguments": '{"x":1}'},
     }
+
+
+# ---------------- from_api_dict (deserialization) ----------------
+
+
+def test_message_from_api_dict_round_trip_user():
+    m = Message(role="user", content="hi")
+    assert Message.from_api_dict(m.to_api_dict()) == m
+
+
+def test_message_from_api_dict_round_trip_assistant_text():
+    m = Message(role="assistant", content="hello")
+    assert Message.from_api_dict(m.to_api_dict()) == m
+
+
+def test_message_from_api_dict_round_trip_assistant_tool_calls():
+    m = Message(
+        role="assistant",
+        content=None,
+        tool_calls=[
+            ToolCall(id="c1", name="read_file", arguments='{"path":"a"}'),
+            ToolCall(id="c2", name="echo", arguments='{}'),
+        ],
+    )
+    restored = Message.from_api_dict(m.to_api_dict())
+    assert restored == m
+
+
+def test_message_from_api_dict_round_trip_tool_result():
+    m = Message(role="tool", tool_call_id="c1", name="read_file", content="ok")
+    assert Message.from_api_dict(m.to_api_dict()) == m
+
+
+def test_message_from_api_dict_system():
+    m = Message(role="system", content="you are helpful")
+    assert Message.from_api_dict(m.to_api_dict()) == m

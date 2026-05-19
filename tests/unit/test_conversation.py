@@ -148,3 +148,64 @@ def test_validate_rejects_empty_tool_call_id():
     c.append_tool_result("", "x", "ok")
     with pytest.raises(ConversationInvalid, match="empty"):
         c.validate()
+
+
+# ---------------- save / load ----------------
+
+
+def test_save_load_round_trip_text_only(tmp_path):
+    c = Conversation(system="be helpful")
+    c.append_user("hi")
+    c.append_assistant(content="hello")
+    path = tmp_path / "session.json"
+    c.save(path)
+
+    restored = Conversation.load(path)
+    assert restored.system == "be helpful"
+    assert [m.role for m in restored.messages] == ["system", "user", "assistant"]
+    assert restored.messages[1].content == "hi"
+    assert restored.messages[2].content == "hello"
+
+
+def test_save_load_round_trip_with_tool_round(tmp_path):
+    c = Conversation(system="s")
+    c.append_user("u")
+    c.append_assistant(
+        content=None,
+        tool_calls=[ToolCall(id="c1", name="read_file", arguments='{"path":"a"}')],
+    )
+    c.append_tool_result("c1", "read_file", "FILE CONTENT")
+    c.append_assistant(content="all done")
+    path = tmp_path / "session.json"
+    c.save(path)
+
+    restored = Conversation.load(path)
+    assert [m.role for m in restored.messages] == [
+        "system", "user", "assistant", "tool", "assistant",
+    ]
+    assert restored.messages[2].tool_calls[0].id == "c1"
+    assert restored.messages[3].tool_call_id == "c1"
+    assert restored.messages[3].content == "FILE CONTENT"
+    restored.validate()  # must pass invariants after round-trip
+
+
+def test_save_creates_parent_dirs(tmp_path):
+    c = Conversation(system="s")
+    path = tmp_path / "deep" / "nested" / "x.json"
+    c.save(path)
+    assert path.exists()
+
+
+def test_load_rejects_missing_system(tmp_path):
+    """Files without a system message at index 0 are corrupt and we refuse them."""
+    path = tmp_path / "bad.json"
+    path.write_text('{"messages": [{"role": "user", "content": "hi"}]}', encoding="utf-8")
+    with pytest.raises(ConversationInvalid, match="system"):
+        Conversation.load(path)
+
+
+def test_load_rejects_empty_messages(tmp_path):
+    path = tmp_path / "empty.json"
+    path.write_text('{"messages": []}', encoding="utf-8")
+    with pytest.raises(ConversationInvalid):
+        Conversation.load(path)

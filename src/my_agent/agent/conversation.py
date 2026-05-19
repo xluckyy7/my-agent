@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from my_agent.agent.errors import ConversationInvalid
 from my_agent.llm.types import Message, ToolCall
 
@@ -41,6 +44,32 @@ class Conversation:
 
     def to_api_format(self) -> list[dict]:
         return [m.to_api_dict() for m in self.messages]
+
+    def save(self, path: Path) -> None:
+        """Persist conversation to a JSON file. Creates parent dirs as needed."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"messages": [m.to_api_dict() for m in self.messages]}
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: Path) -> "Conversation":
+        """Reconstruct a Conversation from a JSON file written by save().
+
+        Raises ConversationInvalid if the file is missing required structure.
+        """
+        data = json.loads(path.read_text(encoding="utf-8"))
+        msgs = [Message.from_api_dict(m) for m in data.get("messages", [])]
+        if not msgs:
+            raise ConversationInvalid("loaded conversation has no messages")
+        if msgs[0].role != "system":
+            raise ConversationInvalid(
+                f"loaded conversation must start with a system message, got role={msgs[0].role!r}"
+            )
+        # Bypass __init__ since we already have the full message list.
+        instance = cls.__new__(cls)
+        instance.system = msgs[0].content or ""
+        instance.messages = msgs
+        return instance
 
     # ------- validation -------
 

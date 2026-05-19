@@ -51,6 +51,34 @@ class Message:
             d["tool_calls"] = [tc.to_api_dict() for tc in self.tool_calls]
         return d
 
+    @classmethod
+    def from_api_dict(cls, d: dict) -> "Message":
+        """Reconstruct a Message from its serialized form (round-trip of to_api_dict)."""
+        role = d["role"]
+        if role == "tool":
+            return cls(
+                role="tool",
+                tool_call_id=d["tool_call_id"],
+                name=d.get("name"),
+                content=d.get("content"),
+            )
+        tool_calls = None
+        raw_tcs = d.get("tool_calls")
+        if raw_tcs:
+            tool_calls = [
+                ToolCall(
+                    id=tc["id"],
+                    name=tc["function"]["name"],
+                    arguments=tc["function"]["arguments"],
+                )
+                for tc in raw_tcs
+            ]
+        return cls(
+            role=role,
+            content=d.get("content"),
+            tool_calls=tool_calls,
+        )
+
 
 @dataclass
 class Response:
