@@ -34,7 +34,13 @@ def app() -> int:
     if not prompt:
         return 0
 
-    print(loop.run_turn(conv, prompt))
+    try:
+        for chunk in loop.run_turn_stream(conv, prompt):
+            print(chunk, end="", flush=True)
+        print()  # final newline
+    except KeyboardInterrupt:
+        print("\n[interrupted]", file=sys.stderr)
+        return 130
     return 0
 
 
