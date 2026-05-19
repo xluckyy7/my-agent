@@ -1,11 +1,15 @@
-from typing import Iterator
+import time
+from typing import Iterator, Union
 
 from my_agent.agent.conversation import Conversation
 from my_agent.agent.errors import AgentBudgetExceeded
+from my_agent.agent.events import TurnTextDelta, TurnToolEnd, TurnToolStart
 from my_agent.llm.client import LLMClient
 from my_agent.llm.stream import assemble_stream
 from my_agent.llm.types import TextDelta
 from my_agent.tools.base import ToolRegistry
+
+TurnEvent = Union[TurnTextDelta, TurnToolStart, TurnToolEnd]
 
 
 class AgentLoop:
@@ -64,16 +68,23 @@ class AgentLoop:
 
     def run_turn_stream(
         self, conv: Conversation, user_input: str
-    ) -> Iterator[str]:
+    ) -> Iterator[TurnEvent]:
         """Streaming variant of run_turn.
 
-        Yields text chunks as they arrive from the model. Tools execute
-        silently between rounds. The Conversation is mutated in place exactly
-        like run_turn — same final state, just incremental output.
+        Yields TurnEvents as the turn unfolds:
+          - TurnTextDelta: incremental text from the model
+          - TurnToolStart: a tool is about to execute
+          - TurnToolEnd:   a tool finished (content is the observation)
+
+        The Conversation is mutated in place exactly like run_turn — same
+        final state, just incremental output.
 
         Caller pattern:
-            for chunk in loop.run_turn_stream(conv, "..."):
-                print(chunk, end="", flush=True)
+            for ev in loop.run_turn_stream(conv, "..."):
+                match ev:
+                    case TurnTextDelta(text=t): print(t, end="", flush=True)
+                    case TurnToolStart(name=n): print(f"\n▸ {n}")
+                    case TurnToolEnd(is_error=err): ...
         """
         conv.append_user(user_input)
         schemas = self.tools.get_schemas()
@@ -93,7 +104,7 @@ class AgentLoop:
             for ev in events:
                 collected.append(ev)
                 if isinstance(ev, TextDelta):
-                    yield ev.text
+                    yield TurnTextDelta(text=ev.text)
 
             resp = assemble_stream(iter(collected))
 
@@ -104,7 +115,19 @@ class AgentLoop:
 
             if resp.finish_reason == "tool_calls":
                 for tc in resp.tool_calls:
+                    yield TurnToolStart(
+                        tool_call_id=tc.id, name=tc.name, arguments=tc.arguments
+                    )
+                    started = time.monotonic()
                     result = self.tools.dispatch(tc.name, tc.arguments)
+                    duration = time.monotonic() - started
+                    yield TurnToolEnd(
+                        tool_call_id=tc.id,
+                        name=tc.name,
+                        content=result.content,
+                        is_error=result.is_error,
+                        duration_seconds=duration,
+                    )
                     conv.append_tool_result(
                         tool_call_id=tc.id,
                         name=tc.name,

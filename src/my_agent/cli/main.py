@@ -7,7 +7,9 @@ import sys
 import readline  # noqa: F401
 
 from my_agent.agent.conversation import Conversation
+from my_agent.agent.events import TurnTextDelta, TurnToolEnd, TurnToolStart
 from my_agent.agent.loop import AgentLoop
+from my_agent.cli.render import CYAN, DIM, GRAY, GREEN, RED, color, truncate
 from my_agent.config import load_config
 from my_agent.llm.client import LLMClient
 from my_agent.tools.base import ToolRegistry
@@ -31,24 +33,48 @@ def build_registry() -> ToolRegistry:
     return reg
 
 
+def _render_event(event) -> None:
+    """Print a single TurnEvent with appropriate styling."""
+    match event:
+        case TurnTextDelta(text=t):
+            print(t, end="", flush=True)
+        case TurnToolStart(name=name, arguments=args):
+            args_preview = truncate(args)
+            print(
+                "\n" + color(f"  ▸ {name} {args_preview}", CYAN + DIM),
+                flush=True,
+            )
+        case TurnToolEnd(name=name, content=content, is_error=err, duration_seconds=dur):
+            mark = "✗" if err else "✓"
+            tone = RED if err else GREEN
+            preview = truncate(content)
+            print(
+                color(f"    {mark} {dur:.2f}s {preview}", tone + DIM),
+                flush=True,
+            )
+
+
 def app() -> int:
     cfg = load_config()
     client = LLMClient(api_key=cfg.api_key, base_url=cfg.base_url, model=cfg.model)
     loop = AgentLoop(client=client, tools=build_registry(), max_tokens=cfg.max_tokens)
     conv = Conversation(system=DEFAULT_SYSTEM_PROMPT)
 
-    prompt = " ".join(sys.argv[1:]).strip()
-    if not prompt:
-        prompt = input(">>> ").strip()
-    if not prompt:
+    prompt_arg = " ".join(sys.argv[1:]).strip()
+    if prompt_arg:
+        user_input = prompt_arg
+    else:
+        prompt_label = color(">>> ", GRAY)
+        user_input = input(prompt_label).strip()
+    if not user_input:
         return 0
 
     try:
-        for chunk in loop.run_turn_stream(conv, prompt):
-            print(chunk, end="", flush=True)
+        for ev in loop.run_turn_stream(conv, user_input):
+            _render_event(ev)
         print()  # final newline
     except KeyboardInterrupt:
-        print("\n[interrupted]", file=sys.stderr)
+        print(color("\n[interrupted]", RED), file=sys.stderr)
         return 130
     return 0
 

@@ -6,9 +6,15 @@ import pytest
 
 from my_agent.agent.conversation import Conversation
 from my_agent.agent.errors import AgentBudgetExceeded
+from my_agent.agent.events import TurnTextDelta, TurnToolEnd, TurnToolStart
 from my_agent.agent.loop import AgentLoop
 from my_agent.llm.types import FinishEvent, TextDelta, ToolCallDelta
 from my_agent.tools.base import Tool, ToolRegistry
+
+
+def _collect_text(events):
+    """Helper: join all TurnTextDelta texts from a turn event sequence."""
+    return "".join(e.text for e in events if isinstance(e, TurnTextDelta))
 
 
 @pytest.fixture
@@ -43,9 +49,9 @@ def test_run_turn_stream_yields_text(echo_registry):
     )
 
     loop = AgentLoop(client=client, tools=echo_registry, max_iterations=5)
-    chunks = list(loop.run_turn_stream(Conversation(system="s"), "hi"))
+    events = list(loop.run_turn_stream(Conversation(system="s"), "hi"))
 
-    assert "".join(chunks) == "hello"
+    assert _collect_text(events) == "hello"
 
 
 def test_run_turn_stream_runs_tool_then_finishes(echo_registry):
@@ -64,9 +70,14 @@ def test_run_turn_stream_runs_tool_then_finishes(echo_registry):
 
     conv = Conversation(system="s")
     loop = AgentLoop(client=client, tools=echo_registry, max_iterations=5)
-    chunks = list(loop.run_turn_stream(conv, "go"))
+    events = list(loop.run_turn_stream(conv, "go"))
 
-    assert "".join(chunks) == "done"
+    assert _collect_text(events) == "done"
+    # New: confirm we get a TurnToolStart + TurnToolEnd pair
+    starts = [e for e in events if isinstance(e, TurnToolStart)]
+    ends = [e for e in events if isinstance(e, TurnToolEnd)]
+    assert len(starts) == 1 and starts[0].name == "echo"
+    assert len(ends) == 1 and ends[0].content == "y" and ends[0].is_error is False
     # Conversation should have system, user, assistant(tool_calls), tool, assistant
     roles = [m.role for m in conv.messages]
     assert roles == ["system", "user", "assistant", "tool", "assistant"]
@@ -91,8 +102,8 @@ def test_run_turn_stream_yields_text_across_rounds(echo_registry):
 
     conv = Conversation(system="s")
     loop = AgentLoop(client=client, tools=echo_registry, max_iterations=5)
-    chunks = list(loop.run_turn_stream(conv, "go"))
-    assert "".join(chunks) == "Let me check. Result is y."
+    events = list(loop.run_turn_stream(conv, "go"))
+    assert _collect_text(events) == "Let me check. Result is y."
 
 
 def test_run_turn_stream_parallel_tool_calls(echo_registry):
