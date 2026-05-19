@@ -53,6 +53,8 @@ class Conversation:
           3. Every tool message must follow an assistant.tool_calls block whose
              ids include the tool message's tool_call_id, and the count of
              tool messages must match the count of tool_calls in that block.
+          4. Every tool_call.id must be a non-empty string (added after a
+             Qwen streaming bug leaked empty-string ids — see iter-3-retro).
         """
         # Invariant 1: system at 0, only one
         system_indices = [i for i, m in enumerate(self.messages) if m.role == "system"]
@@ -76,6 +78,13 @@ class Conversation:
 
             # Invariant 3: tool_calls must be paired with subsequent tool messages
             if m.role == "assistant" and m.tool_calls:
+                # Invariant 4: every tool_call.id must be non-empty
+                for k, tc in enumerate(m.tool_calls):
+                    if not tc.id:
+                        raise ConversationInvalid(
+                            f"assistant at index {i} tool_calls[{k}] has empty id "
+                            f"— likely a streaming-protocol bug; cannot pair with tool messages"
+                        )
                 expected_ids = [tc.id for tc in m.tool_calls]
                 expected_count = len(expected_ids)
                 # The next `expected_count` messages must all be role=tool

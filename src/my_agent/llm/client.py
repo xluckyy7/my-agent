@@ -113,7 +113,20 @@ class LLMClient:
 
         chunks = self.client.chat.completions.create(**kwargs)
 
+        debug = _debug_enabled()
+        chunk_idx = 0
+
         for chunk in chunks:
+            if debug:
+                raw: dict
+                try:
+                    dumped = chunk.model_dump()
+                    raw = dumped if isinstance(dumped, dict) else {"_repr": repr(dumped)}
+                except Exception:
+                    raw = {"_repr": repr(chunk)}
+                _debug_dump(f"CHUNK[{chunk_idx}]", raw)
+                chunk_idx += 1
+
             if not chunk.choices:
                 # Some providers emit usage-only chunks. Ignore.
                 continue
@@ -126,10 +139,16 @@ class LLMClient:
 
             tool_calls = getattr(delta, "tool_calls", None) or []
             for tc in tool_calls:
+                # Qwen quirk: subsequent chunks for the same tool_call send
+                # id="" and name=None instead of (id=None, name=None). We
+                # normalize empty strings to None at this boundary so the
+                # accumulator's "first-non-null wins" semantics actually work.
+                raw_id = getattr(tc, "id", None)
+                raw_name = getattr(tc.function, "name", None) if tc.function else None
                 yield ToolCallDelta(
                     index=tc.index,
-                    id=getattr(tc, "id", None),
-                    name=getattr(tc.function, "name", None) if tc.function else None,
+                    id=raw_id or None,
+                    name=raw_name or None,
                     arguments_delta=(
                         getattr(tc.function, "arguments", "") or "" if tc.function else ""
                     ),

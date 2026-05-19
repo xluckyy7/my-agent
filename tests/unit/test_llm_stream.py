@@ -130,3 +130,37 @@ def test_stream_skips_empty_content_deltas(mocker):
     client = LLMClient(api_key="k", base_url="https://x", model="qwen-plus")
     events = list(client.stream([Message(role="user", content="hi")], tools=[], max_tokens=10))
     assert events == [TextDelta("hi"), FinishEvent(finish_reason="stop")]
+
+
+def test_stream_qwen_empty_string_id_normalized_to_none(mocker):
+    """Qwen real behavior: first chunk has the real id, subsequent chunks send
+    id="" (empty string, not None). Without normalization, assemble_stream
+    overwrites the real id with the empty string.
+
+    Captured from real DashScope output on 2026-05-18 — see iter-3-retro notes.
+    """
+    fake_openai = mocker.patch("my_agent.llm.client.openai.OpenAI")
+    fake_openai.return_value.chat.completions.create.return_value = iter([
+        # Chunk 0: real id + name + empty args
+        _make_chunk(tool_calls=[
+            _make_tc_delta(0, id_="call_REAL", name="read_file", arguments="")
+        ]),
+        # Chunk 1: id="" (Qwen quirk), name=None, args fragment
+        _make_chunk(tool_calls=[
+            _make_tc_delta(0, id_="", name=None, arguments='{"path":"')
+        ]),
+        # Chunk 2: same quirk
+        _make_chunk(tool_calls=[
+            _make_tc_delta(0, id_="", name=None, arguments='a"}')
+        ]),
+        _make_chunk(finish_reason="tool_calls"),
+    ])
+
+    client = LLMClient(api_key="k", base_url="https://x", model="qwen-plus")
+    events = list(client.stream([Message(role="user", content="hi")], tools=[], max_tokens=10))
+
+    # Stream layer should normalize "" → None so accumulators don't get confused.
+    tc_events = [e for e in events if isinstance(e, ToolCallDelta)]
+    assert tc_events[0].id == "call_REAL"
+    assert tc_events[1].id is None   # NOT ""
+    assert tc_events[2].id is None   # NOT ""

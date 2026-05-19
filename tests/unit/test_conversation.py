@@ -134,3 +134,17 @@ def test_validate_rejects_duplicate_system():
     c.messages.append(Message(role="system", content="another"))
     with pytest.raises(ConversationInvalid, match="system"):
         c.validate()
+
+
+def test_validate_rejects_empty_tool_call_id():
+    """Some providers (Qwen streaming) used to leak empty-string id. Catch it
+    locally rather than getting a 400 from a stricter downstream provider."""
+    c = Conversation(system="s")
+    c.append_user("u")
+    c.append_assistant(
+        content=None,
+        tool_calls=[ToolCall(id="", name="x", arguments='{}')],
+    )
+    c.append_tool_result("", "x", "ok")
+    with pytest.raises(ConversationInvalid, match="empty"):
+        c.validate()
