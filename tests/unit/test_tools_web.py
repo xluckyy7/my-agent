@@ -122,3 +122,103 @@ def test_web_fetch_via_registry_dispatch_error(mocker):
     res = reg.dispatch("web_fetch", '{"url": "https://broken.example.com/"}')
     assert res.is_error is True
     assert "refused" in res.content.lower() or "connection" in res.content.lower()
+
+
+# ---------------- web_search (Tavily) ----------------
+
+
+def _fake_tavily_response(results=None, answer=""):
+    r = MagicMock()
+    r.status_code = 200
+    r.json.return_value = {
+        "query": "test query",
+        "answer": answer,
+        "results": results or [],
+    }
+    r.raise_for_status = lambda: None
+    return r
+
+
+def test_web_search_calls_tavily_with_query_and_key(mocker, monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-fake-key")
+    fake_post = mocker.patch("my_agent.tools.web.httpx.Client.post")
+    fake_post.return_value = _fake_tavily_response(
+        results=[{"title": "T1", "url": "https://a.com", "content": "snippet 1"}]
+    )
+
+    from my_agent.tools.web import web_search_tool
+
+    out = web_search_tool.fn({"query": "what is rust"})
+    fake_post.assert_called_once()
+    call = fake_post.call_args
+    body = call.kwargs.get("json") or call.args[1]
+    assert body["query"] == "what is rust"
+    assert body["api_key"] == "tvly-fake-key"
+    assert "T1" in out
+    assert "https://a.com" in out
+    assert "snippet 1" in out
+
+
+def test_web_search_formats_multiple_results(mocker, monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
+    fake_post = mocker.patch("my_agent.tools.web.httpx.Client.post")
+    fake_post.return_value = _fake_tavily_response(
+        results=[
+            {"title": f"Title {i}", "url": f"https://x.com/{i}", "content": f"snippet {i}"}
+            for i in range(5)
+        ]
+    )
+    from my_agent.tools.web import web_search_tool
+
+    out = web_search_tool.fn({"query": "anything"})
+    for i in range(5):
+        assert f"Title {i}" in out
+        assert f"https://x.com/{i}" in out
+
+
+def test_web_search_includes_tavily_answer_when_present(mocker, monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
+    fake_post = mocker.patch("my_agent.tools.web.httpx.Client.post")
+    fake_post.return_value = _fake_tavily_response(
+        answer="Rust is a systems programming language.",
+        results=[{"title": "x", "url": "https://x.com", "content": "y"}],
+    )
+    from my_agent.tools.web import web_search_tool
+
+    out = web_search_tool.fn({"query": "rust"})
+    assert "Rust is a systems programming language" in out
+
+
+def test_web_search_missing_key_raises(mocker, monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    from my_agent.tools.web import web_search_tool
+
+    with pytest.raises(RuntimeError, match="TAVILY_API_KEY"):
+        web_search_tool.fn({"query": "anything"})
+
+
+def test_web_search_passes_max_results(mocker, monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
+    fake_post = mocker.patch("my_agent.tools.web.httpx.Client.post")
+    fake_post.return_value = _fake_tavily_response(results=[])
+    from my_agent.tools.web import web_search_tool
+
+    web_search_tool.fn({"query": "x", "max_results": 3})
+    body = fake_post.call_args.kwargs["json"]
+    assert body["max_results"] == 3
+
+
+def test_web_search_schema_shape():
+    from my_agent.tools.web import web_search_tool
+
+    s = web_search_tool.parameters
+    assert s["type"] == "object"
+    assert "query" in s["properties"]
+    assert s["required"] == ["query"]
+
+
+def test_web_search_metadata():
+    from my_agent.tools.web import web_search_tool
+
+    assert web_search_tool.name == "web_search"
+    assert web_search_tool.description

@@ -1,3 +1,4 @@
+import os
 import sys
 
 # Side-effect import: enabling GNU readline / libedit so input() handles
@@ -15,7 +16,7 @@ from my_agent.llm.client import LLMClient
 from my_agent.tools.base import ToolRegistry
 from my_agent.tools.files import read_file_tool, write_file_tool
 from my_agent.tools.shell import run_bash_tool
-from my_agent.tools.web import web_fetch_tool
+from my_agent.tools.web import web_fetch_tool, web_search_tool
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful coding assistant. "
@@ -26,12 +27,18 @@ DEFAULT_SYSTEM_PROMPT = (
 
 
 def build_registry() -> ToolRegistry:
-    """Wire up the v0.6 tool set."""
+    """Wire up the v0.6 tool set.
+
+    web_search is only registered when TAVILY_API_KEY is present, so models
+    don't see a tool they can't actually invoke.
+    """
     reg = ToolRegistry()
     reg.register(read_file_tool)
     reg.register(write_file_tool)
     reg.register(run_bash_tool)
     reg.register(web_fetch_tool)
+    if os.environ.get("TAVILY_API_KEY"):
+        reg.register(web_search_tool)
     return reg
 
 
