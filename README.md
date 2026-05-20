@@ -163,7 +163,8 @@ my-agent/
 | **v0.2** | 多回合 ReAct loop + Conversation 不变量 | 59 |
 | **v0.3** | 流式 + run_bash + ANSI 工具指示器 | 101 |
 | **v0.4** | REPL + slash 命令 + /save /load | 128 |
-| v0.5(规划) | 上下文压缩 / token 预算 | |
+| **v0.5** | 上下文压缩(sliding window + LLM summary)| 148 |
+| v0.5.x(known limitation) | 单消息 / 最近 K 轮自己超预算时压缩失效(见 [iter-5-retro](docs/notes/iter-5-retro.md#-known-limitations)) | |
 | v0.6(规划) | web_fetch / web_search | |
 | v0.7(规划) | 跨会话长期记忆 | |
 | v0.8(规划) | MCP 客户端 | |

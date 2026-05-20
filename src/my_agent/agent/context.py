@@ -70,6 +70,16 @@ class ContextManager:
     The summary is wrapped with SUMMARY_PREFIX so the model — and humans
     reading the JSON — clearly see it's reconstructed context, not literal
     user input.
+
+    KNOWN LIMITATIONS (see docs/notes/iter-5-retro.md "Known Limitations"):
+      - A single message bigger than the budget (e.g. huge paste, huge
+        tool_result) is NOT shrunk — maybe_compact returns False because the
+        keep-window already covers it.
+      - The "recent K turns" alone may exceed the budget, leaving conv
+        oversized even after a successful summary of the middle section.
+    Mitigations (iterative compaction, tool-result truncation, tool-call
+    collapse) are deferred — to be added when real usage actually triggers
+    these cases.
     """
 
     def __init__(
