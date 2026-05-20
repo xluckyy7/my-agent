@@ -157,3 +157,31 @@ def test_summarizer_called_with_third_party_role(fake_summarizer):
     assert messages[0].role == "user"
     assert "summar" in messages[0].content.lower()
     assert call_kwargs["tools"] == []
+
+
+# ---------------- force_compact ----------------
+
+
+def test_force_compact_ignores_trigger_ratio(fake_summarizer):
+    """Under budget — maybe_compact does nothing, but force_compact still runs."""
+    cm = ContextManager(client=fake_summarizer, budget=100_000, keep_recent_turns=1)
+    conv = Conversation(system="s")
+    for i in range(5):
+        conv.append_user(f"u{i}")
+        conv.append_assistant(content=f"a{i}")
+
+    assert cm.maybe_compact(conv) is False  # way under budget
+    fake_summarizer.send.assert_not_called()
+
+    assert cm.force_compact(conv) is True
+    fake_summarizer.send.assert_called_once()
+
+
+def test_force_compact_returns_false_when_nothing_to_compact(fake_summarizer):
+    """Even forced, can't compact a single-turn conversation."""
+    cm = ContextManager(client=fake_summarizer, budget=100, keep_recent_turns=4)
+    conv = Conversation(system="s")
+    conv.append_user("hi")
+    conv.append_assistant(content="hello")
+    assert cm.force_compact(conv) is False
+    fake_summarizer.send.assert_not_called()

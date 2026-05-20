@@ -4,7 +4,17 @@ from unittest.mock import MagicMock
 import pytest
 
 from my_agent.agent.conversation import Conversation
-from my_agent.cli.repl import COMMANDS, Repl, cmd_help, cmd_load, cmd_quit, cmd_reset, cmd_save
+from my_agent.cli.repl import (
+    COMMANDS,
+    Repl,
+    cmd_compact,
+    cmd_help,
+    cmd_load,
+    cmd_quit,
+    cmd_reset,
+    cmd_save,
+    cmd_tokens,
+)
 
 
 def _make_repl(out=None, err=None):
@@ -176,3 +186,81 @@ def test_run_two_ctrl_c_exits(monkeypatch):
 
     monkeypatch.setattr("builtins.input", fake_input)
     assert repl.run() == 0
+
+
+# ---------------- /tokens and /compact ----------------
+
+
+def _make_repl_with_cm(out=None, err=None):
+    """Repl with a mock ContextManager attached to its loop."""
+    repl = _make_repl(out=out, err=err)
+    cm = MagicMock()
+    cm.budget = 8000
+    cm.total_tokens.return_value = 1234
+    repl.loop.context_mgr = cm
+    return repl, cm
+
+
+def test_tokens_reports_count_and_budget():
+    out = io.StringIO()
+    repl, cm = _make_repl_with_cm(out=out)
+    cmd_tokens(repl, "")
+    text = out.getvalue()
+    assert "1234" in text
+    assert "8000" in text
+    assert "%" in text
+
+
+def test_tokens_without_context_mgr_errors():
+    err = io.StringIO()
+    repl = _make_repl(err=err)
+    repl.loop.context_mgr = None
+    cmd_tokens(repl, "")
+    assert "no ContextManager" in err.getvalue() or "no" in err.getvalue().lower()
+
+
+def test_compact_force_compacts_and_reports_savings():
+    out = io.StringIO()
+    repl, cm = _make_repl_with_cm(out=out)
+    # before=1234, after=400 → 67% saved
+    cm.total_tokens.side_effect = [1234, 400]
+    cm.force_compact.return_value = True
+
+    cmd_compact(repl, "")
+    text = out.getvalue()
+    assert "1234" in text
+    assert "400" in text
+    cm.force_compact.assert_called_once_with(repl.conv)
+
+
+def test_compact_nothing_to_compact_message():
+    out = io.StringIO()
+    repl, cm = _make_repl_with_cm(out=out)
+    cm.total_tokens.return_value = 100
+    cm.force_compact.return_value = False
+    cmd_compact(repl, "")
+    assert "nothing to compact" in out.getvalue().lower()
+
+
+def test_compact_without_context_mgr_errors():
+    err = io.StringIO()
+    repl = _make_repl(err=err)
+    repl.loop.context_mgr = None
+    cmd_compact(repl, "")
+    assert "no" in err.getvalue().lower()
+
+
+def test_help_lists_new_commands():
+    out = io.StringIO()
+    repl = _make_repl(out=out)
+    cmd_help(repl, "")
+    text = out.getvalue()
+    assert "/tokens" in text
+    assert "/compact" in text
+
+
+def test_commands_table_has_tokens_and_compact():
+    assert "tokens" in COMMANDS
+    assert "compact" in COMMANDS
+    assert COMMANDS["tokens"] is cmd_tokens
+    assert COMMANDS["compact"] is cmd_compact

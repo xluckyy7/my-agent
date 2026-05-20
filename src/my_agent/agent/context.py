@@ -102,10 +102,22 @@ class ContextManager:
         return sum(count_message_tokens(m) for m in conv.messages)
 
     def maybe_compact(self, conv) -> bool:
-        """Compact in-place if needed. Returns True if compaction happened."""
+        """Compact in-place if budget exceeded. Returns True if compaction happened."""
         if self.total_tokens(conv) < self.budget * self.trigger_ratio:
             return False
+        return self._do_compact(conv)
 
+    def force_compact(self, conv) -> bool:
+        """Compact unconditionally (bypass trigger_ratio).
+
+        Returns True iff conv was actually modified. Returns False when there
+        is nothing compactable (history too short to summarize). Used by the
+        REPL's /compact command.
+        """
+        return self._do_compact(conv)
+
+    def _do_compact(self, conv) -> bool:
+        """Core compaction logic. Returns True if conv was actually changed."""
         split_idx = self._find_split_index(conv)
         # split_idx <= 1 means keep window already covers everything past system
         if split_idx <= 1:

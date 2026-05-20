@@ -175,11 +175,53 @@ def cmd_help(repl: Repl, arg: str) -> None:
         "  /reset              Clear conversation history (keep system prompt)",
         "  /save <path>        Save current conversation to a JSON file",
         "  /load <path>        Replace conversation with one loaded from file",
+        "  /tokens             Show current token count vs budget",
+        "  /compact            Manually trigger context compaction now",
         "",
         "Plain text (no leading /) is sent to the agent as a turn.",
         "ctrl-c: interrupt current turn  |  ctrl-d: exit REPL",
     ]
     repl._println("\n".join(lines))
+
+
+def cmd_tokens(repl: Repl, arg: str) -> None:
+    cm = getattr(repl.loop, "context_mgr", None)
+    if cm is None:
+        repl._errln(color("tokens: no ContextManager configured", RED))
+        return
+    used = cm.total_tokens(repl.conv)
+    budget = cm.budget
+    pct = (used / budget * 100) if budget else 0
+    user_turns = sum(1 for m in repl.conv.messages if m.role == "user")
+    repl._println(
+        color(
+            f"tokens: {used} / {budget} ({pct:.1f}% of budget) — "
+            f"{len(repl.conv.messages)} messages, {user_turns} user turns",
+            GRAY,
+        )
+    )
+
+
+def cmd_compact(repl: Repl, arg: str) -> None:
+    cm = getattr(repl.loop, "context_mgr", None)
+    if cm is None:
+        repl._errln(color("compact: no ContextManager configured", RED))
+        return
+    before = cm.total_tokens(repl.conv)
+    try:
+        changed = cm.force_compact(repl.conv)
+    except Exception as e:
+        repl._errln(color(f"compact failed: {e}", RED))
+        return
+    if not changed:
+        repl._println(color(f"nothing to compact ({before} tokens, history too short)", GRAY))
+        return
+    after = cm.total_tokens(repl.conv)
+    saved = before - after
+    pct = (saved / before * 100) if before else 0
+    repl._println(
+        color(f"compacted: {before} → {after} tokens ({pct:.1f}% saved)", GRAY)
+    )
 
 
 COMMANDS: dict[str, Callable[[Repl, str], None]] = {
@@ -191,4 +233,6 @@ COMMANDS: dict[str, Callable[[Repl, str], None]] = {
     "load": cmd_load,
     "help": cmd_help,
     "?": cmd_help,
+    "tokens": cmd_tokens,
+    "compact": cmd_compact,
 }
