@@ -10,6 +10,10 @@ class Config:
     base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     model: str = "qwen-plus"
     max_tokens: int = 4096
+    # Iter 5: context compaction budget in tokens. Conservative default leaves
+    # plenty of headroom for new responses and tool schemas in the prompt.
+    context_budget: int = 8000
+    keep_recent_turns: int = 4
 
 
 def load_config() -> Config:
@@ -29,4 +33,6 @@ def load_config() -> Config:
             "https://dashscope.aliyuncs.com/compatible-mode/v1",
         ),
         model=os.environ.get("DEFAULT_MODEL", "qwen-plus"),
+        context_budget=int(os.environ.get("CONTEXT_BUDGET", "8000")),
+        keep_recent_turns=int(os.environ.get("KEEP_RECENT_TURNS", "4")),
     )

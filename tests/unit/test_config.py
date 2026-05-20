@@ -25,3 +25,14 @@ def test_config_defaults():
     assert cfg.base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
     assert cfg.model == "qwen-plus"
     assert cfg.max_tokens == 4096
+    assert cfg.context_budget == 8000
+    assert cfg.keep_recent_turns == 4
+
+
+def test_load_config_context_overrides(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "k")
+    monkeypatch.setenv("CONTEXT_BUDGET", "16000")
+    monkeypatch.setenv("KEEP_RECENT_TURNS", "8")
+    cfg = load_config()
+    assert cfg.context_budget == 16000
+    assert cfg.keep_recent_turns == 8

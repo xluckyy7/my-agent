@@ -6,6 +6,7 @@ import sys
 # only deletes one byte and corrupts the display.
 import readline  # noqa: F401
 
+from my_agent.agent.context import ContextManager
 from my_agent.agent.conversation import Conversation
 from my_agent.agent.loop import AgentLoop
 from my_agent.cli.repl import Repl
@@ -24,7 +25,7 @@ DEFAULT_SYSTEM_PROMPT = (
 
 
 def build_registry() -> ToolRegistry:
-    """Wire up the v0.4 tool set."""
+    """Wire up the v0.5 tool set."""
     reg = ToolRegistry()
     reg.register(read_file_tool)
     reg.register(write_file_tool)
@@ -35,7 +36,18 @@ def build_registry() -> ToolRegistry:
 def app() -> int:
     cfg = load_config()
     client = LLMClient(api_key=cfg.api_key, base_url=cfg.base_url, model=cfg.model)
-    loop = AgentLoop(client=client, tools=build_registry(), max_tokens=cfg.max_tokens)
+    # Summarizer shares the same client/model by default (cheap to swap later).
+    context_mgr = ContextManager(
+        client=client,
+        budget=cfg.context_budget,
+        keep_recent_turns=cfg.keep_recent_turns,
+    )
+    loop = AgentLoop(
+        client=client,
+        tools=build_registry(),
+        max_tokens=cfg.max_tokens,
+        context_mgr=context_mgr,
+    )
     conv = Conversation(system=DEFAULT_SYSTEM_PROMPT)
     repl = Repl(loop=loop, conv=conv)
 

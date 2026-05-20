@@ -163,3 +163,35 @@ def test_loop_validates_conversation_before_each_send(echo_registry):
     loop = AgentLoop(client=client, tools=echo_registry, max_iterations=5)
     with pytest.raises(ConversationInvalid):
         loop.run_turn(conv, "go")
+
+
+# ---------------- context manager integration ----------------
+
+
+def test_loop_calls_maybe_compact_before_each_send(echo_registry):
+    """If context_mgr is provided, maybe_compact() must be called before every
+    client.send so we never exceed budget."""
+    client = MagicMock()
+    client.send.side_effect = [
+        Response(content=None, tool_calls=[ToolCall(id="c1", name="echo", arguments='{"x":"y"}')], finish_reason="tool_calls"),
+        Response(content="done", tool_calls=[], finish_reason="stop"),
+    ]
+    cm = MagicMock()
+    cm.maybe_compact.return_value = False
+
+    loop = AgentLoop(client=client, tools=echo_registry, max_iterations=5, context_mgr=cm)
+    loop.run_turn(Conversation(system="s"), "go")
+
+    # Two send calls → two maybe_compact calls
+    assert cm.maybe_compact.call_count == 2
+
+
+def test_loop_without_context_mgr_works(echo_registry):
+    """context_mgr defaults to None — loop should still work normally."""
+    client = MagicMock()
+    client.send.return_value = Response(content="ok", tool_calls=[], finish_reason="stop")
+
+    loop = AgentLoop(client=client, tools=echo_registry, max_iterations=5)
+    assert loop.context_mgr is None
+    out = loop.run_turn(Conversation(system="s"), "go")
+    assert out == "ok"

@@ -1,6 +1,7 @@
 import time
-from typing import Iterator, Union
+from typing import Iterator, Optional, Union
 
+from my_agent.agent.context import ContextManager
 from my_agent.agent.conversation import Conversation
 from my_agent.agent.errors import AgentBudgetExceeded
 from my_agent.agent.events import TurnTextDelta, TurnToolEnd, TurnToolStart
@@ -26,17 +27,21 @@ class AgentLoop:
         tools: ToolRegistry,
         max_iterations: int = 20,
         max_tokens: int = 4096,
+        context_mgr: Optional[ContextManager] = None,
     ):
         self.client = client
         self.tools = tools
         self.max_iterations = max_iterations
         self.max_tokens = max_tokens
+        self.context_mgr = context_mgr
 
     def run_turn(self, conv: Conversation, user_input: str) -> str:
         conv.append_user(user_input)
         schemas = self.tools.get_schemas()
 
         for _ in range(self.max_iterations):
+            if self.context_mgr is not None:
+                self.context_mgr.maybe_compact(conv)
             conv.validate()  # local-fail-fast on protocol violations
             resp = self.client.send(
                 messages=conv.messages,
@@ -90,6 +95,8 @@ class AgentLoop:
         schemas = self.tools.get_schemas()
 
         for _ in range(self.max_iterations):
+            if self.context_mgr is not None:
+                self.context_mgr.maybe_compact(conv)
             conv.validate()
             events = self.client.stream(
                 messages=conv.messages,
