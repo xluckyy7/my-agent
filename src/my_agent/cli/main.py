@@ -15,21 +15,23 @@ from my_agent.llm.client import LLMClient
 from my_agent.tools.base import ToolRegistry
 from my_agent.tools.files import read_file_tool, write_file_tool
 from my_agent.tools.shell import run_bash_tool
+from my_agent.tools.web import web_fetch_tool
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful coding assistant. "
-    "Use the available tools to read files, write files, and run shell "
-    "commands when the task requires it. When you have enough information, "
-    "give the user a final answer."
+    "Use the available tools to read files, write files, run shell commands, "
+    "and fetch web pages when the task requires it. When you have enough "
+    "information, give the user a final answer."
 )
 
 
 def build_registry() -> ToolRegistry:
-    """Wire up the v0.5 tool set."""
+    """Wire up the v0.6 tool set."""
     reg = ToolRegistry()
     reg.register(read_file_tool)
     reg.register(write_file_tool)
     reg.register(run_bash_tool)
+    reg.register(web_fetch_tool)
     return reg
 
 
