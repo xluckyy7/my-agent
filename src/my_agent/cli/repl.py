@@ -1,6 +1,7 @@
 """Interactive REPL: multi-turn input loop with slash commands."""
 
 import sys
+import time
 from pathlib import Path
 from typing import IO, Callable
 
@@ -9,6 +10,9 @@ from my_agent.agent.errors import ConversationInvalid
 from my_agent.agent.events import TurnTextDelta, TurnToolEnd, TurnToolStart
 from my_agent.agent.loop import AgentLoop
 from my_agent.cli.render import CYAN, DIM, GRAY, GREEN, RED, color, truncate
+
+# Seconds within which a second ctrl-c at the prompt exits the REPL.
+SIGINT_EXIT_WINDOW = 2.0
 
 
 class Repl:
@@ -27,6 +31,7 @@ class Repl:
         self.out = out if out is not None else sys.stdout
         self.err = err if err is not None else sys.stderr
         self._quit = False
+        self._last_sigint: float = 0.0  # monotonic seconds; 0 = never
 
     # ------- output helpers -------
 
@@ -48,11 +53,25 @@ class Repl:
                 self._println(color("bye", GRAY))
                 return 0
             except KeyboardInterrupt:
-                # ctrl-c at the prompt itself: just newline and continue
+                # ctrl-c at the prompt: first press shows a hint, second press
+                # within SIGINT_EXIT_WINDOW exits. Single-press just discards
+                # the current typed line (shell-like).
+                if self._should_exit_on_sigint():
+                    self._println()
+                    self._println(color("bye", GRAY))
+                    return 0
                 self._println()
+                self._errln(color("[press ctrl-c again or /quit to exit]", GRAY))
                 continue
             self.handle_input(line)
         return 0
+
+    def _should_exit_on_sigint(self) -> bool:
+        """True iff a previous SIGINT happened recently enough to count as 'double-tap'."""
+        now = time.monotonic()
+        within_window = (now - self._last_sigint) < SIGINT_EXIT_WINDOW
+        self._last_sigint = now
+        return within_window
 
     def handle_input(self, line: str) -> None:
         """Process one user input. Either dispatch slash command or run a turn.

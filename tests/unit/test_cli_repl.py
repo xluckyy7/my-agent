@@ -136,3 +136,43 @@ def test_handle_input_keyboard_interrupt_does_not_exit():
     repl.handle_input("anything")
     assert repl._quit is False
     assert "interrupt" in err.getvalue().lower()
+
+
+# ---------------- ctrl-c at prompt: double-tap to exit ----------------
+
+
+def test_single_sigint_does_not_exit():
+    repl = _make_repl()
+    assert repl._should_exit_on_sigint() is False
+
+
+def test_double_sigint_within_window_exits():
+    """Two ctrl-c presses within SIGINT_EXIT_WINDOW seconds → exit."""
+    repl = _make_repl()
+    repl._should_exit_on_sigint()  # first press
+    # second press immediately after → should exit
+    assert repl._should_exit_on_sigint() is True
+
+
+def test_double_sigint_outside_window_does_not_exit(monkeypatch):
+    """If the two presses are too far apart, second press only shows hint again."""
+    import my_agent.cli.repl as repl_mod
+
+    times = iter([100.0, 200.0])  # 100s apart, way outside 2s window
+    monkeypatch.setattr(repl_mod.time, "monotonic", lambda: next(times))
+
+    repl = _make_repl()
+    assert repl._should_exit_on_sigint() is False  # first press at t=100
+    assert repl._should_exit_on_sigint() is False  # second press at t=200 (100s later)
+
+
+def test_run_two_ctrl_c_exits(monkeypatch):
+    """End-to-end via input() mock: two ctrl-c presses exit the run() loop."""
+    repl = _make_repl()
+    presses = iter([KeyboardInterrupt(), KeyboardInterrupt()])
+
+    def fake_input(prompt):
+        raise next(presses)
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    assert repl.run() == 0
