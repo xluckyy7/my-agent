@@ -1,0 +1,55 @@
+{
+  "_doc": "Copy to ~/.my-agent/hooks.json to activate. See docs/notes/iter-11-retro.md.",
+  "_example_command_hook": "logs every tool call to /tmp/my-agent-tools.log",
+  "_example_langfuse_hook": "wires all events to langfuse — requires LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY env vars",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "jq -r '\"[\\(.timestamp | strftime(\"%H:%M:%S\")) tool] \\(.data.tool_name) \\(.data.arguments[:120])\"' >> /tmp/my-agent-tools.log",
+        "matcher": ""
+      },
+      {
+        "type": "python",
+        "module": "my_agent.plugins.langfuse_plugin",
+        "function": "on_pre_tool_use"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "python",
+        "module": "my_agent.plugins.langfuse_plugin",
+        "function": "on_post_tool_use"
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "type": "python",
+        "module": "my_agent.plugins.langfuse_plugin",
+        "function": "on_user_prompt_submit"
+      }
+    ],
+    "PreModelCall": [
+      {
+        "type": "python",
+        "module": "my_agent.plugins.langfuse_plugin",
+        "function": "on_pre_model_call"
+      }
+    ],
+    "PostModelCall": [
+      {
+        "type": "python",
+        "module": "my_agent.plugins.langfuse_plugin",
+        "function": "on_post_model_call"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "python",
+        "module": "my_agent.plugins.langfuse_plugin",
+        "function": "on_stop"
+      }
+    ]
+  }
+}

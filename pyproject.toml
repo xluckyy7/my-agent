@@ -20,6 +20,9 @@ dev = [
     "pytest-mock>=3.12",
     "ruff>=0.5",
 ]
+langfuse = [
+    "langfuse>=4.0",
+]
 
 [project.scripts]
 my-agent = "my_agent.cli.main:app"

@@ -16,7 +16,7 @@ from my_agent.agent.memory import (
     load_project_memory,
     load_user_memory,
 )
-from my_agent.cli.main import DEFAULT_SYSTEM_PROMPT, build_registry
+from my_agent.cli.main import DEFAULT_SYSTEM_PROMPT, build_hook_manager, build_registry
 from my_agent.config import load_config
 from my_agent.llm.client import LLMClient
 
@@ -28,8 +28,12 @@ def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
     home = Path(os.environ.get("HOME", str(Path.home())))
     cwd = Path.cwd()
 
-    client = LLMClient(api_key=cfg.api_key, base_url=cfg.base_url, model=cfg.model)
-    registry = build_registry(home=home, client=client)
+    hooks = build_hook_manager(home)
+    client = LLMClient(
+        api_key=cfg.api_key, base_url=cfg.base_url, model=cfg.model, hooks=hooks
+    )
+    registry = build_registry(home=home, client=client, hooks=hooks)
+    hooks.fire("SessionStart", data={"mode": "web"})
 
     # Each request builds a fresh AgentLoop (cheap; just a class wrapper).
     # Session state lives in SessionStore inside the FastAPI app.
@@ -44,6 +48,7 @@ def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
             tools=registry,
             max_tokens=cfg.max_tokens,
             context_mgr=context_mgr,
+            hooks=hooks,
         )
 
     system_prompt = compose_system_prompt(

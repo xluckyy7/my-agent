@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Optional
 
 
 @dataclass
@@ -37,10 +37,14 @@ class ToolRegistry:
     Dispatch never raises: every failure path (unknown tool, bad JSON, fn
     exception) becomes a ToolResult(is_error=True) so the agent loop stays
     simple — it just appends the result and keeps going.
+
+    Optional `hooks` (HookManager) lets observers see PreToolUse / PostToolUse
+    events without modifying the loop. Hooks are best-effort and cannot block.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, hooks: Optional["HookManager"] = None) -> None:  # noqa: F821
         self._tools: dict[str, Tool] = {}
+        self._hooks = hooks
 
     def register(self, tool: Tool) -> None:
         self._tools[tool.name] = tool
@@ -59,14 +63,36 @@ class ToolRegistry:
         ]
 
     def dispatch(self, name: str, args_json: str) -> ToolResult:
+        if self._hooks is not None:
+            self._hooks.fire(
+                "PreToolUse",
+                data={"tool_name": name, "arguments": args_json},
+                subject=name,
+            )
+
         if name not in self._tools:
-            return ToolResult(content=f"unknown tool: {name}", is_error=True)
-        try:
-            args = json.loads(args_json)
-        except json.JSONDecodeError as e:
-            return ToolResult(content=f"invalid JSON arguments: {e}", is_error=True)
-        try:
-            output = self._tools[name].fn(args)
-        except Exception as e:
-            return ToolResult(content=f"{type(e).__name__}: {e}", is_error=True)
-        return ToolResult(content=str(output), is_error=False)
+            result = ToolResult(content=f"unknown tool: {name}", is_error=True)
+        else:
+            try:
+                args = json.loads(args_json)
+            except json.JSONDecodeError as e:
+                result = ToolResult(content=f"invalid JSON arguments: {e}", is_error=True)
+            else:
+                try:
+                    output = self._tools[name].fn(args)
+                    result = ToolResult(content=str(output), is_error=False)
+                except Exception as e:
+                    result = ToolResult(content=f"{type(e).__name__}: {e}", is_error=True)
+
+        if self._hooks is not None:
+            self._hooks.fire(
+                "PostToolUse",
+                data={
+                    "tool_name": name,
+                    "arguments": args_json,
+                    "content": result.content,
+                    "is_error": result.is_error,
+                },
+                subject=name,
+            )
+        return result

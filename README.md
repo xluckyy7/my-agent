@@ -215,9 +215,10 @@ my-agent/
 | v0.5.x(known limitation) | 单消息 / 最近 K 轮自己超预算时压缩失效(见 [iter-5-retro](docs/notes/iter-5-retro.md#-known-limitations)) | |
 | **v0.6** | web_fetch(trafilatura)/ web_search(Tavily 可选)| 175 |
 | **v0.7** | 跨会话长期记忆(AGENT.md + MEMORY.md + remember 工具 + /memory)| 200 |
-| v0.8(规划) | MCP 客户端 | |
-| v0.9(规划) | sub-agent / Task 工具 | |
-| v1.0(规划) | FastAPI + SSE web 包装 | |
+| **v0.8** | MCP 客户端(stdio,接生态) | 226 |
+| **v0.9** | sub-agent / Task 工具(上下文隔离) | 235 |
+| **v1.0** | FastAPI + SSE web 包装 + sessions sidebar UI | 250 |
+| **v1.1** | Hook 系统(Claude 风格)+ langfuse 观测插件 | **278** |
 
 ---
 

@@ -10,6 +10,7 @@ import readline  # noqa: F401
 
 from my_agent.agent.context import ContextManager
 from my_agent.agent.conversation import Conversation
+from my_agent.agent.hooks import HookConfigError, HookManager, load_hooks
 from my_agent.agent.loop import AgentLoop
 from my_agent.agent.memory import (
     compose_system_prompt,
@@ -34,6 +35,23 @@ DEFAULT_SYSTEM_PROMPT = (
     "fetch web pages, and remember long-term facts when the task requires it. "
     "When you have enough information, give the user a final answer."
 )
+
+
+def build_hook_manager(home: Path) -> HookManager:
+    """Load ~/.my-agent/hooks.json and build a HookManager.
+
+    Malformed config logs to stderr and falls back to no-op HookManager —
+    a broken hook config must not block agent startup.
+    """
+    try:
+        specs = load_hooks(home)
+    except HookConfigError as e:
+        print(f"[hooks] config error: {e}", file=sys.stderr)
+        specs = {}
+    if specs:
+        events_with_hooks = sorted(specs.keys())
+        print(f"[hooks] active on: {', '.join(events_with_hooks)}", file=sys.stderr)
+    return HookManager(specs)
 
 
 def _collect_base_tools(home: Path) -> list[Tool]:
@@ -62,15 +80,16 @@ def _collect_base_tools(home: Path) -> list[Tool]:
     return tools
 
 
-def build_registry(home: Path, client) -> ToolRegistry:
-    """Wire up the v0.9 tool set: built-ins + MCP tools + task tool.
+def build_registry(home: Path, client, hooks: HookManager | None = None) -> ToolRegistry:
+    """Wire up the v1.1 tool set: built-ins + MCP tools + task tool.
 
     web_search is only registered when TAVILY_API_KEY is present.
     `remember` is bound to the given home dir.
     `task` (Iter 9) spawns sub-agents that share the same base tools.
+    `hooks` (Iter 11) gets PreToolUse/PostToolUse events on every dispatch.
     """
     base_tools = _collect_base_tools(home)
-    reg = ToolRegistry()
+    reg = ToolRegistry(hooks=hooks)
     for t in base_tools:
         reg.register(t)
     reg.register(make_task_tool(client=client, base_tools=base_tools, depth=0))
@@ -82,7 +101,10 @@ def app() -> int:
     home = Path(os.environ.get("HOME", str(Path.home())))
     cwd = Path.cwd()
 
-    client = LLMClient(api_key=cfg.api_key, base_url=cfg.base_url, model=cfg.model)
+    hooks = build_hook_manager(home)
+    client = LLMClient(
+        api_key=cfg.api_key, base_url=cfg.base_url, model=cfg.model, hooks=hooks
+    )
     # Summarizer shares the same client/model by default (cheap to swap later).
     context_mgr = ContextManager(
         client=client,
@@ -91,10 +113,12 @@ def app() -> int:
     )
     loop = AgentLoop(
         client=client,
-        tools=build_registry(home=home, client=client),
+        tools=build_registry(home=home, client=client, hooks=hooks),
         max_tokens=cfg.max_tokens,
         context_mgr=context_mgr,
+        hooks=hooks,
     )
+    hooks.fire("SessionStart", data={"mode": "cli"})
 
     # Iter 7: weave project + user memory into the system prompt at startup.
     system = compose_system_prompt(

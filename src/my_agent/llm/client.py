@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from typing import Iterator
+from typing import Iterator, Optional
 
 import openai
 
@@ -37,9 +37,16 @@ class LLMClient:
     Set MY_AGENT_DEBUG=1 to dump full request/response JSON to stderr.
     """
 
-    def __init__(self, api_key: str, base_url: str, model: str):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str,
+        model: str,
+        hooks: Optional["HookManager"] = None,  # noqa: F821
+    ):
         self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
+        self._hooks = hooks
 
     def send(
         self,
@@ -57,6 +64,13 @@ class LLMClient:
 
         if _debug_enabled():
             _debug_dump("REQUEST", kwargs)
+
+        if self._hooks is not None:
+            self._hooks.fire(
+                "PreModelCall",
+                data={"model": self.model, "messages": kwargs["messages"], "stream": False},
+                subject=self.model,
+            )
 
         completion = self.client.chat.completions.create(**kwargs)
         choice = completion.choices[0]
@@ -81,12 +95,30 @@ class LLMClient:
         if _debug_enabled():
             _debug_dump("RESPONSE", raw or {"_note": "raw unavailable"})
 
-        return Response(
+        response = Response(
             content=msg.content,
             tool_calls=tool_calls,
             finish_reason=choice.finish_reason,
             raw=raw,
         )
+
+        if self._hooks is not None:
+            self._hooks.fire(
+                "PostModelCall",
+                data={
+                    "model": self.model,
+                    "content": response.content,
+                    "tool_calls": [
+                        {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                        for tc in response.tool_calls
+                    ],
+                    "finish_reason": response.finish_reason,
+                    "usage": (raw or {}).get("usage"),
+                    "stream": False,
+                },
+                subject=self.model,
+            )
+        return response
 
     def stream(
         self,
@@ -110,6 +142,13 @@ class LLMClient:
 
         if _debug_enabled():
             _debug_dump("REQUEST(stream)", {k: v for k, v in kwargs.items() if k != "stream"})
+
+        if self._hooks is not None:
+            self._hooks.fire(
+                "PreModelCall",
+                data={"model": self.model, "messages": kwargs["messages"], "stream": True},
+                subject=self.model,
+            )
 
         chunks = self.client.chat.completions.create(**kwargs)
 
@@ -156,3 +195,13 @@ class LLMClient:
 
             if choice.finish_reason is not None:
                 yield FinishEvent(finish_reason=choice.finish_reason)
+                if self._hooks is not None:
+                    self._hooks.fire(
+                        "PostModelCall",
+                        data={
+                            "model": self.model,
+                            "finish_reason": choice.finish_reason,
+                            "stream": True,
+                        },
+                        subject=self.model,
+                    )

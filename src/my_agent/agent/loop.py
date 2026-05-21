@@ -5,6 +5,7 @@ from my_agent.agent.context import ContextManager
 from my_agent.agent.conversation import Conversation
 from my_agent.agent.errors import AgentBudgetExceeded
 from my_agent.agent.events import TurnTextDelta, TurnToolEnd, TurnToolStart
+from my_agent.agent.hooks import HookManager
 from my_agent.llm.client import LLMClient
 from my_agent.llm.stream import assemble_stream
 from my_agent.llm.types import TextDelta
@@ -28,16 +29,24 @@ class AgentLoop:
         max_iterations: int = 20,
         max_tokens: int = 4096,
         context_mgr: Optional[ContextManager] = None,
+        hooks: Optional[HookManager] = None,
     ):
         self.client = client
         self.tools = tools
         self.max_iterations = max_iterations
         self.max_tokens = max_tokens
         self.context_mgr = context_mgr
+        self.hooks = hooks
+
+    def _fire(self, name: str, data: dict | None = None, subject: str = "") -> None:
+        if self.hooks is not None:
+            self.hooks.fire(name, data=data, subject=subject)
 
     def run_turn(self, conv: Conversation, user_input: str) -> str:
+        self._fire("UserPromptSubmit", data={"prompt": user_input, "stream": False})
         conv.append_user(user_input)
         schemas = self.tools.get_schemas()
+        final_text = ""
 
         for _ in range(self.max_iterations):
             if self.context_mgr is not None:
@@ -65,8 +74,11 @@ class AgentLoop:
                 continue
 
             # stop, length, content_filter, or anything else: terminate
-            return resp.content or ""
+            final_text = resp.content or ""
+            self._fire("Stop", data={"final_text": final_text, "stream": False})
+            return final_text
 
+        self._fire("Stop", data={"final_text": "", "stream": False, "reason": "budget_exceeded"})
         raise AgentBudgetExceeded(
             f"exceeded {self.max_iterations} iterations without finish_reason=stop"
         )
@@ -91,8 +103,10 @@ class AgentLoop:
                     case TurnToolStart(name=n): print(f"\n▸ {n}")
                     case TurnToolEnd(is_error=err): ...
         """
+        self._fire("UserPromptSubmit", data={"prompt": user_input, "stream": True})
         conv.append_user(user_input)
         schemas = self.tools.get_schemas()
+        accumulated_text: list[str] = []
 
         for _ in range(self.max_iterations):
             if self.context_mgr is not None:
@@ -111,6 +125,7 @@ class AgentLoop:
             for ev in events:
                 collected.append(ev)
                 if isinstance(ev, TextDelta):
+                    accumulated_text.append(ev.text)
                     yield TurnTextDelta(text=ev.text)
 
             resp = assemble_stream(iter(collected))
@@ -143,8 +158,20 @@ class AgentLoop:
                 continue
 
             # stop / length / content_filter / etc: terminate cleanly
+            self._fire(
+                "Stop",
+                data={"final_text": "".join(accumulated_text), "stream": True},
+            )
             return
 
+        self._fire(
+            "Stop",
+            data={
+                "final_text": "".join(accumulated_text),
+                "stream": True,
+                "reason": "budget_exceeded",
+            },
+        )
         raise AgentBudgetExceeded(
             f"exceeded {self.max_iterations} iterations without finish_reason=stop"
         )
