@@ -1,26 +1,29 @@
+from unittest.mock import MagicMock
+
 from my_agent.cli.main import build_registry
 
 
-def test_build_registry_includes_all_v08_builtin_tools(tmp_path):
-    reg = build_registry(home=tmp_path)
+def test_build_registry_includes_all_v09_builtin_tools(tmp_path):
+    reg = build_registry(home=tmp_path, client=MagicMock())
     names = [s["function"]["name"] for s in reg.get_schemas()]
     assert "read_file" in names
     assert "write_file" in names
     assert "run_bash" in names
     assert "web_fetch" in names
     assert "remember" in names
+    assert "task" in names  # Iter 9
 
 
 def test_build_registry_skips_web_search_without_tavily_key(monkeypatch, tmp_path):
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-    reg = build_registry(home=tmp_path)
+    reg = build_registry(home=tmp_path, client=MagicMock())
     names = [s["function"]["name"] for s in reg.get_schemas()]
     assert "web_search" not in names
 
 
 def test_build_registry_includes_web_search_when_tavily_key_set(monkeypatch, tmp_path):
     monkeypatch.setenv("TAVILY_API_KEY", "tvly-fake")
-    reg = build_registry(home=tmp_path)
+    reg = build_registry(home=tmp_path, client=MagicMock())
     names = [s["function"]["name"] for s in reg.get_schemas()]
     assert "web_search" in names
 
@@ -51,6 +54,6 @@ def test_build_registry_loads_mcp_servers_from_config(monkeypatch, tmp_path, moc
         return_value=[fake_tool],
     )
 
-    reg = build_registry(home=tmp_path)
+    reg = build_registry(home=tmp_path, client=MagicMock())
     names = [s["function"]["name"] for s in reg.get_schemas()]
     assert "fakeserver__hello" in names

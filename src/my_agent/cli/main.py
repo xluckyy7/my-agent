@@ -21,10 +21,11 @@ from my_agent.config import load_config
 from my_agent.llm.client import LLMClient
 from my_agent.mcp_layer.adapter import build_mcp_tools
 from my_agent.mcp_layer.config import MCPConfigError, load_mcp_config
-from my_agent.tools.base import ToolRegistry
+from my_agent.tools.base import Tool, ToolRegistry
 from my_agent.tools.files import read_file_tool, write_file_tool
 from my_agent.tools.memory_tool import make_remember_tool
 from my_agent.tools.shell import run_bash_tool
+from my_agent.tools.task_tool import make_task_tool
 from my_agent.tools.web import web_fetch_tool, web_search_tool
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -35,25 +36,20 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 
-def build_registry(home: Path) -> ToolRegistry:
-    """Wire up the v0.8 tool set: built-ins + any configured MCP servers.
-
-    web_search is only registered when TAVILY_API_KEY is present.
-    `remember` is bound to the given home dir.
-    MCP tools come from ~/.my-agent/mcp.json — each remote tool is namespaced
-    `<server>__<tool>`. A misbehaving MCP server logs to stderr and is skipped,
-    so the agent stays alive on built-ins.
-    """
-    reg = ToolRegistry()
-    reg.register(read_file_tool)
-    reg.register(write_file_tool)
-    reg.register(run_bash_tool)
-    reg.register(web_fetch_tool)
+def _collect_base_tools(home: Path) -> list[Tool]:
+    """All non-task tools, in registration order. Used by both top-level
+    registry and as the base set for sub-agents (Iter 9)."""
+    tools: list[Tool] = [
+        read_file_tool,
+        write_file_tool,
+        run_bash_tool,
+        web_fetch_tool,
+    ]
     if os.environ.get("TAVILY_API_KEY"):
-        reg.register(web_search_tool)
-    reg.register(make_remember_tool(home=home))
+        tools.append(web_search_tool)
+    tools.append(make_remember_tool(home=home))
 
-    # MCP servers (Iter 8)
+    # MCP tools (Iter 8)
     try:
         mcp_specs = load_mcp_config(home)
     except MCPConfigError as e:
@@ -61,8 +57,23 @@ def build_registry(home: Path) -> ToolRegistry:
         mcp_specs = []
     for spec in mcp_specs:
         for tool in build_mcp_tools(spec):
-            reg.register(tool)
+            tools.append(tool)
 
+    return tools
+
+
+def build_registry(home: Path, client) -> ToolRegistry:
+    """Wire up the v0.9 tool set: built-ins + MCP tools + task tool.
+
+    web_search is only registered when TAVILY_API_KEY is present.
+    `remember` is bound to the given home dir.
+    `task` (Iter 9) spawns sub-agents that share the same base tools.
+    """
+    base_tools = _collect_base_tools(home)
+    reg = ToolRegistry()
+    for t in base_tools:
+        reg.register(t)
+    reg.register(make_task_tool(client=client, base_tools=base_tools, depth=0))
     return reg
 
 
@@ -80,7 +91,7 @@ def app() -> int:
     )
     loop = AgentLoop(
         client=client,
-        tools=build_registry(home=home),
+        tools=build_registry(home=home, client=client),
         max_tokens=cfg.max_tokens,
         context_mgr=context_mgr,
     )
