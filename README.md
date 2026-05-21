@@ -48,16 +48,21 @@ MY_AGENT_DEBUG=1 python -m my_agent "你好"
 
 ---
 
-## 当前功能(v0.7)
+## 当前功能(v1.1)
 
 - **多轮对话** — REPL 模式跨 turn 持久 conversation
 - **流式输出** — 文本逐 token 显示
-- **5 个内置工具** — `read_file` / `write_file` / `run_bash` / `web_fetch` / `remember`(+ `web_search` 当 TAVILY_API_KEY 配置时)
+- **6 个内置工具** — `read_file` / `write_file` / `run_bash` / `web_fetch` / `remember` / `task`(+ `web_search` 当 TAVILY_API_KEY 配置时)
+- **MCP 客户端** — 配 `~/.my-agent/mcp.json` 接第三方 server,工具自动以 `<server>__<tool>` 注册
+- **Sub-agent / Task tool** — `task("...")` 派生子 agent 处理子任务,中间步骤不污染主对话
 - **工具指示器** — 终端实时显示 `▸ tool {args}` → `✓ 0.12s {preview}` / `✗ error`
 - **多轮 ReAct loop** — 工具调用可链式触发,直到任务完成(上限 20 轮)
 - **会话持久化** — `/save <path>` 落 JSON,`/load <path>` 恢复
 - **自动上下文压缩** — 接近 token 预算时,sliding window + LLM summarization 自动触发
 - **跨会话长期记忆** — `./AGENT.md`(项目)+ `~/.my-agent/memory/MEMORY.md`(用户) 启动时注入 system prompt;`remember` 工具让 agent 主动写
+- **Web UI** — `python -m my_agent.web` 起 FastAPI + SSE,ChatGPT 风格 sidebar + 主区
+- **Hook 系统(Claude 风格)** — 7 事件 × 2 类型(command/python),配 `~/.my-agent/hooks.json` 接观测插件不动核心
+- **Langfuse 插件** — 出厂自带 observability 插件(可选 `pip install -e ".[langfuse]"`)
 - **协议守护** — Conversation 5 条不变量校验,提前抓住 API 400 类问题
 - **中文输入正常** — `readline` 处理多字节字符 + 方向键 + ↑↓ 历史
 
@@ -114,26 +119,29 @@ agent 启动后会知道这些事实,**无需在每次会话重新告诉它**。
 ## 架构
 
 ```
-              ┌──────────────────────────────┐
-              │   CLI / Repl(slash 命令)    │   cli/main.py + cli/repl.py
-              └──────────────┬───────────────┘
-                             │ user_input
-                             ▼
+   ┌──────────────────────┐    ┌──────────────────────┐
+   │  CLI / Repl          │    │  FastAPI + SSE       │  Iter 10/v1.0
+   │  (slash 命令)        │    │  (sidebar + sessions)│
+   └─────────┬────────────┘    └────────┬─────────────┘
+             │ user_input                │
+             └──────────┬────────────────┘
+                        ▼
               ┌──────────────────────────────┐
               │     AgentLoop.run_turn_stream │   agent/loop.py
               │  while not done:              │
               │    context_mgr.maybe_compact()│   ← Iter 5
-              │    LLMClient.stream(...)      │
-              │    assemble events            │
-              │    if tool_calls: dispatch    │
-              │    yield TurnEvent            │
-              └──┬─────────┬──────────┬──────┘
-                 │         │          │
-                 ▼         ▼          ▼
-         ┌──────────┐ ┌──────────┐ ┌──────────────┐
+              │    LLMClient.stream(...)      │   ─┐
+              │    assemble events            │   │ HookManager.fire
+              │    if tool_calls: dispatch    │   │ (PreModelCall /
+              │    yield TurnEvent            │   │  PostModelCall /
+              └──┬─────────┬──────────┬──────┘   │  Pre|PostToolUse /
+                 │         │          │           │  UserPromptSubmit /
+                 ▼         ▼          ▼           │  Stop)         ← Iter 11
+         ┌──────────┐ ┌──────────┐ ┌──────────────┘
          │Conversa- │ │  Tool    │ │  LLMClient   │
          │  tion    │ │ Registry │ │  (openai SDK)│
-         │+validate │ │name → fn │ │ + base_url   │
+         │+validate │ │+hooks    │ │ +hooks       │
+         │          │ │name → fn │ │ + base_url   │
          └──────────┘ └────┬─────┘ └──────────────┘
                            │
                            ▼
@@ -157,6 +165,9 @@ agent 启动后会知道这些事实,**无需在每次会话重新告诉它**。
 - `Conversation.validate` 在每次 send 前调用,把"远端 400"变成"本地立即报错"
 - `ContextManager.maybe_compact` 在每次 send 前调用,超 budget 自动 sliding window + LLM summary
 - `compose_system_prompt(base, project, user)` 在启动时拼出最终 system,顺序固定:base → project → user
+- `HookManager.fire` 永不抛异常:插件失败 stderr 警告,不阻塞 agent
+- MCP 工具命名空间 `<server>__<tool>` 防冲突
+- Sub-agent 共享父的 client + tools,但自己的 Conversation(上下文隔离)
 
 ---
 
@@ -186,18 +197,27 @@ my-agent/
 │   │   ├── types.py           # Message / ToolCall / Response / StreamEvent
 │   │   └── stream.py          # assemble_stream(events) -> Response
 │   └── tools/
-│       ├── base.py            # Tool + ToolRegistry + ToolResult
+│       ├── base.py            # Tool + ToolRegistry + ToolResult (+hooks)
 │       ├── files.py           # read_file_tool, write_file_tool
 │       ├── shell.py           # run_bash_tool (timeout + cwd)
 │       ├── web.py             # web_fetch_tool, web_search_tool (Tavily)
-│       └── memory_tool.py     # make_remember_tool(home) 工厂
+│       ├── memory_tool.py     # make_remember_tool(home) 工厂
+│       └── task_tool.py       # make_task_tool — sub-agent spawn (Iter 9)
+├── src/my_agent/agent/
+│   └── hooks.py               # HookManager + HookSpec + load_hooks (Iter 11)
+├── src/my_agent/mcp_layer/    # MCP client integration (Iter 8)
+│   ├── config.py / client.py / adapter.py
+├── src/my_agent/web/          # FastAPI + SSE (Iter 10)
+│   ├── app.py / sessions.py / server.py
+├── src/my_agent/plugins/      # 第三方观测插件 (Iter 11)
+│   └── langfuse_plugin.py
 ├── tests/
-│   ├── unit/                  # 200 测试 < 5s
+│   ├── unit/                  # 278 测试 < 5s
 │   ├── integration/           # 默认 skip,pytest -m integration 启用
 │   └── conftest.py
 └── docs/
     ├── plans/                 # 设计文档 + 实施计划
-    └── notes/                 # iter-N-retro.md 学习沉淀
+    └── notes/                 # iter-N-retro.md + 项目状态总览
 ```
 
 ---
@@ -261,4 +281,5 @@ DEFAULT_MODEL=deepseek-chat
 
 - **设计文档:** [`docs/plans/2026-05-15-my-agent-design.md`](docs/plans/2026-05-15-my-agent-design.md)
 - **实施计划:** [`docs/plans/2026-05-15-my-agent-implementation-plan.md`](docs/plans/2026-05-15-my-agent-implementation-plan.md)
-- **学习沉淀:** [`docs/notes/`](docs/notes/) — 每个 iter 一份 retro
+- **项目状态总览(v1.1):** [`docs/notes/v1.1-state-of-project.md`](docs/notes/v1.1-state-of-project.md) — 能力清单 + 已知限制
+- **学习沉淀:** [`docs/notes/iter-N-retro.md`](docs/notes/) — 每个 iter 一份 retro
