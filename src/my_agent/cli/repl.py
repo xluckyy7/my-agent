@@ -180,6 +180,7 @@ def cmd_help(repl: Repl, arg: str) -> None:
         "  /tokens             Show current token count vs budget",
         "  /compact            Manually trigger context compaction now",
         "  /memory [clear]     Show or clear long-term user memory",
+        "  /mcp                List active MCP servers and their tools",
         "",
         "Plain text (no leading /) is sent to the agent as a turn.",
         "ctrl-c: interrupt current turn  |  ctrl-d: exit REPL",
@@ -251,6 +252,28 @@ def cmd_memory(repl: Repl, arg: str) -> None:
     repl._errln(color(f"usage: /memory [list|clear] (got: {arg!r})", RED))
 
 
+def cmd_mcp(repl: Repl, arg: str) -> None:
+    """List MCP-namespaced tools currently registered."""
+    schemas = repl.loop.tools.get_schemas()
+    by_server: dict[str, list[str]] = {}
+    for s in schemas:
+        name = s["function"]["name"]
+        if "__" not in name:
+            continue
+        server, tool = name.split("__", 1)
+        by_server.setdefault(server, []).append(tool)
+
+    if not by_server:
+        repl._println(color("no MCP servers configured (see ~/.my-agent/mcp.json)", GRAY))
+        return
+
+    for server in sorted(by_server):
+        tools = by_server[server]
+        repl._println(color(f"{server}  ({len(tools)} tools)", GRAY))
+        for t in sorted(tools):
+            repl._println(color(f"  - {server}__{t}", GRAY))
+
+
 COMMANDS: dict[str, Callable[[Repl, str], None]] = {
     "quit": cmd_quit,
     "q": cmd_quit,
@@ -263,4 +286,5 @@ COMMANDS: dict[str, Callable[[Repl, str], None]] = {
     "tokens": cmd_tokens,
     "compact": cmd_compact,
     "memory": cmd_memory,
+    "mcp": cmd_mcp,
 }

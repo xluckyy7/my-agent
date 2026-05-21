@@ -10,6 +10,7 @@ from my_agent.cli.repl import (
     cmd_compact,
     cmd_help,
     cmd_load,
+    cmd_mcp,
     cmd_memory,
     cmd_quit,
     cmd_reset,
@@ -314,3 +315,43 @@ def test_memory_unknown_subcommand(tmp_path, monkeypatch):
 def test_commands_table_has_memory():
     assert "memory" in COMMANDS
     assert COMMANDS["memory"] is cmd_memory
+
+
+# ---------------- /mcp ----------------
+
+
+def test_mcp_lists_registered_mcp_tools():
+    """/mcp shows all tools whose names start with `<server>__`."""
+    out = io.StringIO()
+    repl = _make_repl(out=out)
+    # Inject a mock loop with namespaced MCP-style tools
+    fake_schemas = [
+        {"type": "function", "function": {"name": "filesystem__read", "description": "x"}},
+        {"type": "function", "function": {"name": "filesystem__write", "description": "y"}},
+        {"type": "function", "function": {"name": "fetch__get", "description": "z"}},
+        {"type": "function", "function": {"name": "read_file", "description": "built-in"}},
+    ]
+    repl.loop.tools.get_schemas.return_value = fake_schemas
+
+    cmd_mcp(repl, "")
+    text = out.getvalue()
+    assert "filesystem" in text
+    assert "fetch" in text
+    assert "filesystem__read" in text
+    # built-in should NOT be listed
+    assert "(built-in)" not in text or "read_file" not in text.split("(built-in)")[0]
+
+
+def test_mcp_says_none_when_no_mcp_tools():
+    out = io.StringIO()
+    repl = _make_repl(out=out)
+    repl.loop.tools.get_schemas.return_value = [
+        {"type": "function", "function": {"name": "read_file"}},
+    ]
+    cmd_mcp(repl, "")
+    assert "no MCP" in out.getvalue() or "no mcp" in out.getvalue().lower()
+
+
+def test_commands_table_has_mcp():
+    assert "mcp" in COMMANDS
+    assert COMMANDS["mcp"] is cmd_mcp

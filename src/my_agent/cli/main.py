@@ -19,6 +19,8 @@ from my_agent.agent.memory import (
 from my_agent.cli.repl import Repl
 from my_agent.config import load_config
 from my_agent.llm.client import LLMClient
+from my_agent.mcp_layer.adapter import build_mcp_tools
+from my_agent.mcp_layer.config import MCPConfigError, load_mcp_config
 from my_agent.tools.base import ToolRegistry
 from my_agent.tools.files import read_file_tool, write_file_tool
 from my_agent.tools.memory_tool import make_remember_tool
@@ -34,12 +36,13 @@ DEFAULT_SYSTEM_PROMPT = (
 
 
 def build_registry(home: Path) -> ToolRegistry:
-    """Wire up the v0.7 tool set.
+    """Wire up the v0.8 tool set: built-ins + any configured MCP servers.
 
-    web_search is only registered when TAVILY_API_KEY is present, so models
-    don't see a tool they can't actually invoke.
-
-    `remember` is bound to the given home dir so its target path is testable.
+    web_search is only registered when TAVILY_API_KEY is present.
+    `remember` is bound to the given home dir.
+    MCP tools come from ~/.my-agent/mcp.json — each remote tool is namespaced
+    `<server>__<tool>`. A misbehaving MCP server logs to stderr and is skipped,
+    so the agent stays alive on built-ins.
     """
     reg = ToolRegistry()
     reg.register(read_file_tool)
@@ -49,6 +52,17 @@ def build_registry(home: Path) -> ToolRegistry:
     if os.environ.get("TAVILY_API_KEY"):
         reg.register(web_search_tool)
     reg.register(make_remember_tool(home=home))
+
+    # MCP servers (Iter 8)
+    try:
+        mcp_specs = load_mcp_config(home)
+    except MCPConfigError as e:
+        print(f"[mcp] config error: {e}", file=sys.stderr)
+        mcp_specs = []
+    for spec in mcp_specs:
+        for tool in build_mcp_tools(spec):
+            reg.register(tool)
+
     return reg
 
 
