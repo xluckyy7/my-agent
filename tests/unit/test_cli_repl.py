@@ -10,6 +10,7 @@ from my_agent.cli.repl import (
     cmd_compact,
     cmd_help,
     cmd_load,
+    cmd_memory,
     cmd_quit,
     cmd_reset,
     cmd_save,
@@ -264,3 +265,52 @@ def test_commands_table_has_tokens_and_compact():
     assert "compact" in COMMANDS
     assert COMMANDS["tokens"] is cmd_tokens
     assert COMMANDS["compact"] is cmd_compact
+
+
+# ---------------- /memory ----------------
+
+
+def test_memory_list_shows_existing_user_memory(tmp_path, monkeypatch):
+    """`/memory` (no args) prints current user memory content."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    mem_path = tmp_path / ".my-agent" / "memory" / "MEMORY.md"
+    mem_path.parent.mkdir(parents=True)
+    mem_path.write_text("- 2026-05-21: user likes terse output\n", encoding="utf-8")
+
+    out = io.StringIO()
+    repl = _make_repl(out=out)
+    cmd_memory(repl, "")
+    assert "terse output" in out.getvalue()
+
+
+def test_memory_list_says_empty_when_no_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    out = io.StringIO()
+    repl = _make_repl(out=out)
+    cmd_memory(repl, "")
+    assert "empty" in out.getvalue().lower() or "no memory" in out.getvalue().lower()
+
+
+def test_memory_clear_wipes_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    mem_path = tmp_path / ".my-agent" / "memory" / "MEMORY.md"
+    mem_path.parent.mkdir(parents=True)
+    mem_path.write_text("old stuff\n", encoding="utf-8")
+
+    out = io.StringIO()
+    repl = _make_repl(out=out)
+    cmd_memory(repl, "clear")
+    assert not mem_path.exists() or mem_path.read_text().strip() == ""
+
+
+def test_memory_unknown_subcommand(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    err = io.StringIO()
+    repl = _make_repl(err=err)
+    cmd_memory(repl, "frobnicate")
+    assert "usage" in err.getvalue().lower() or "unknown" in err.getvalue().lower()
+
+
+def test_commands_table_has_memory():
+    assert "memory" in COMMANDS
+    assert COMMANDS["memory"] is cmd_memory

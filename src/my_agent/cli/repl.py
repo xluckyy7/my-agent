@@ -1,5 +1,6 @@
 """Interactive REPL: multi-turn input loop with slash commands."""
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -9,6 +10,7 @@ from my_agent.agent.conversation import Conversation
 from my_agent.agent.errors import ConversationInvalid
 from my_agent.agent.events import TurnTextDelta, TurnToolEnd, TurnToolStart
 from my_agent.agent.loop import AgentLoop
+from my_agent.agent.memory import default_user_memory_path, load_user_memory
 from my_agent.cli.render import CYAN, DIM, GRAY, GREEN, RED, color, truncate
 
 # Seconds within which a second ctrl-c at the prompt exits the REPL.
@@ -177,6 +179,7 @@ def cmd_help(repl: Repl, arg: str) -> None:
         "  /load <path>        Replace conversation with one loaded from file",
         "  /tokens             Show current token count vs budget",
         "  /compact            Manually trigger context compaction now",
+        "  /memory [clear]     Show or clear long-term user memory",
         "",
         "Plain text (no leading /) is sent to the agent as a turn.",
         "ctrl-c: interrupt current turn  |  ctrl-d: exit REPL",
@@ -224,6 +227,30 @@ def cmd_compact(repl: Repl, arg: str) -> None:
     )
 
 
+def cmd_memory(repl: Repl, arg: str) -> None:
+    """`/memory` show user memory; `/memory clear` wipe it."""
+    home = Path(os.environ.get("HOME", str(Path.home())))
+    sub = arg.strip().lower()
+
+    if sub == "" or sub == "list" or sub == "show":
+        content = load_user_memory(home)
+        if not content:
+            repl._println(color("memory is empty", GRAY))
+            return
+        repl._println(color(f"# {default_user_memory_path(home)}", GRAY))
+        repl._println(content)
+        return
+
+    if sub == "clear":
+        target = default_user_memory_path(home)
+        if target.exists():
+            target.unlink()
+        repl._println(color("memory cleared", GRAY))
+        return
+
+    repl._errln(color(f"usage: /memory [list|clear] (got: {arg!r})", RED))
+
+
 COMMANDS: dict[str, Callable[[Repl, str], None]] = {
     "quit": cmd_quit,
     "q": cmd_quit,
@@ -235,4 +262,5 @@ COMMANDS: dict[str, Callable[[Repl, str], None]] = {
     "?": cmd_help,
     "tokens": cmd_tokens,
     "compact": cmd_compact,
+    "memory": cmd_memory,
 }
