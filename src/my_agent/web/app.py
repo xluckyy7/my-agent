@@ -221,7 +221,7 @@ _INDEX_HTML = r"""<!doctype html>
 
 <div class="sidebar">
   <div class="sidebar-header">
-    <button class="new-chat-btn" onclick="newChat()">+ New chat</button>
+    <button class="new-chat-btn" id="newChatBtn">+ New chat</button>
   </div>
   <div class="sessions-list" id="sessions"></div>
 </div>
@@ -231,10 +231,10 @@ _INDEX_HTML = r"""<!doctype html>
     <div class="welcome">Start a new chat or select one from the sidebar.</div>
   </div>
   <div class="input-area">
-    <form id="f" onsubmit="return send(event)">
+    <form id="f">
       <div class="input-row">
         <input id="q" autocomplete="off" placeholder="问点什么..." autofocus />
-        <button id="send" type="submit">Send</button>
+        <button id="sendBtn" type="submit">Send</button>
       </div>
     </form>
   </div>
@@ -244,7 +244,9 @@ _INDEX_HTML = r"""<!doctype html>
 const $sessions = document.getElementById('sessions');
 const $messages = document.getElementById('messages');
 const $q = document.getElementById('q');
-const $send = document.getElementById('send');
+const $sendBtn = document.getElementById('sendBtn');
+const $form = document.getElementById('f');
+const $newChatBtn = document.getElementById('newChatBtn');
 
 let currentId = localStorage.getItem('my-agent-session') || null;
 
@@ -359,27 +361,27 @@ async function deleteSession(id) {
 
 // ---------- chat ----------
 
-async function send(e) {
-  e.preventDefault();
+async function send() {
   const prompt = $q.value.trim();
-  if (!prompt) return false;
+  if (!prompt) return;
 
-  if (!currentId) {
-    // Auto-create a fresh session on first send
-    const r = await fetch('/sessions', {method: 'POST'});
-    const data = await r.json();
-    currentId = data.session_id;
-    localStorage.setItem('my-agent-session', currentId);
-    clearMessages();
-  }
-
-  $q.value = '';
-  $send.disabled = true;
-
-  appendMessage('user', prompt);
-  const assistantBody = appendMessage('assistant', '');
+  $sendBtn.disabled = true;
 
   try {
+    if (!currentId) {
+      // Auto-create a fresh session on first send
+      const r = await fetch('/sessions', {method: 'POST'});
+      const data = await r.json();
+      currentId = data.session_id;
+      localStorage.setItem('my-agent-session', currentId);
+      clearMessages();
+    }
+
+    $q.value = '';
+
+    appendMessage('user', prompt);
+    const assistantBody = appendMessage('assistant', '');
+
     const resp = await fetch('/chat', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -407,24 +409,28 @@ async function send(e) {
           const mark = ev.is_error ? '✗' : '✓';
           appendInline(`    ${mark} ${ev.duration_seconds.toFixed(2)}s`, 'tool-end-line');
         } else if (ev.type === 'error') {
-          assistantBody.innerHTML += `<div class="err">[error] ${ev.message}</div>`;
+          const errDiv = $el('div', {class: 'err', text: '[error] ' + ev.message});
+          assistantBody.parentNode.appendChild(errDiv);
         } else if (ev.type === 'done') {
           break;
         }
       }
     }
   } catch (err) {
-    assistantBody.innerHTML += `<div class="err">[network error] ${err.message}</div>`;
+    console.error('send failed:', err);
+    const errDiv = $el('div', {class: 'err', text: '[network error] ' + err.message});
+    $messages.appendChild(errDiv);
   } finally {
-    $send.disabled = false;
+    $sendBtn.disabled = false;
     $q.focus();
     await loadSessions();  // refresh titles/counts
   }
-
-  return false;
 }
 
 // ---------- init ----------
+
+$form.addEventListener('submit', (e) => { e.preventDefault(); send(); });
+$newChatBtn.addEventListener('click', () => { newChat(); });
 
 (async () => {
   await loadSessions();
