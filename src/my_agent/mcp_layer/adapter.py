@@ -5,12 +5,14 @@ AgentLoop, REPL) never knows MCP exists. Tool names are namespaced
 `<server>__<tool>` to avoid clashes with built-in tools.
 """
 
-import sys
+import logging
 
 from my_agent.tools.base import Tool
 
 from .client import MCPToolSpec, call_tool_sync, fetch_tools_sync
 from .config import MCPServerSpec
+
+logger = logging.getLogger(__name__)
 
 
 def mcp_tool_to_internal(server: MCPServerSpec, mcp_tool: MCPToolSpec) -> Tool:
@@ -47,9 +49,6 @@ def build_mcp_tools(spec: MCPServerSpec) -> list[Tool]:
     try:
         mcp_tools = fetch_tools_sync(spec)
     except Exception as e:
-        print(
-            f"[mcp] failed to discover tools from server {spec.name!r}: {e}",
-            file=sys.stderr,
-        )
+        logger.warning("failed to discover tools from server %r: %s", spec.name, e)
         return []
     return [mcp_tool_to_internal(spec, t) for t in mcp_tools]

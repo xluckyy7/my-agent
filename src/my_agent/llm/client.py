@@ -1,6 +1,6 @@
 import json
+import logging
 import os
-import sys
 from typing import Iterator, Optional
 
 import openai
@@ -14,6 +14,8 @@ from .types import (
     ToolCallDelta,
 )
 
+logger = logging.getLogger(__name__)
+
 StreamEvent = TextDelta | ToolCallDelta | FinishEvent
 
 DEBUG_ENV_VAR = "MY_AGENT_DEBUG"
@@ -24,8 +26,7 @@ def _debug_enabled() -> bool:
 
 
 def _debug_dump(label: str, payload: dict) -> None:
-    print(f"───── {label} ─────", file=sys.stderr)
-    print(json.dumps(payload, ensure_ascii=False, indent=2), file=sys.stderr)
+    logger.debug("───── %s ─────\n%s", label, json.dumps(payload, ensure_ascii=False, indent=2))
 
 
 class LLMClient:
@@ -136,6 +137,10 @@ class LLMClient:
             "messages": [m.to_api_dict() for m in messages],
             "max_tokens": max_tokens,
             "stream": True,
+            # OpenAI-compat streaming protocol: server only emits a final
+            # usage chunk (choices=[], usage={...}) when this flag is set.
+            # Without it, we'd have no token counts in stream mode at all.
+            "stream_options": {"include_usage": True},
         }
         if tools:
             kwargs["tools"] = tools
@@ -155,53 +160,78 @@ class LLMClient:
         debug = _debug_enabled()
         chunk_idx = 0
 
-        for chunk in chunks:
-            if debug:
-                raw: dict
-                try:
-                    dumped = chunk.model_dump()
-                    raw = dumped if isinstance(dumped, dict) else {"_repr": repr(dumped)}
-                except Exception:
-                    raw = {"_repr": repr(chunk)}
-                _debug_dump(f"CHUNK[{chunk_idx}]", raw)
-                chunk_idx += 1
+        # Accumulate state across chunks so PostModelCall (fired once at the
+        # end) has the full picture — including the usage chunk that arrives
+        # AFTER the finish-reason chunk.
+        accumulated_text: list[str] = []
+        finish_reason: Optional[str] = None
+        usage: Optional[dict] = None
 
-            if not chunk.choices:
-                # Some providers emit usage-only chunks. Ignore.
-                continue
-            choice = chunk.choices[0]
-            delta = choice.delta
+        try:
+            for chunk in chunks:
+                if debug:
+                    raw: dict
+                    try:
+                        dumped = chunk.model_dump()
+                        raw = dumped if isinstance(dumped, dict) else {"_repr": repr(dumped)}
+                    except Exception:
+                        raw = {"_repr": repr(chunk)}
+                    _debug_dump(f"CHUNK[{chunk_idx}]", raw)
+                    chunk_idx += 1
 
-            content = getattr(delta, "content", None)
-            if content:
-                yield TextDelta(text=content)
+                # Usage-only chunks (choices=[]) carry token counts when
+                # include_usage is on. They typically arrive AFTER the
+                # finish-reason chunk, so we capture but don't skip the loop.
+                chunk_usage = getattr(chunk, "usage", None)
+                if chunk_usage is not None:
+                    try:
+                        usage = chunk_usage.model_dump()
+                    except Exception:
+                        usage = dict(chunk_usage) if chunk_usage else None
 
-            tool_calls = getattr(delta, "tool_calls", None) or []
-            for tc in tool_calls:
-                # Qwen quirk: subsequent chunks for the same tool_call send
-                # id="" and name=None instead of (id=None, name=None). We
-                # normalize empty strings to None at this boundary so the
-                # accumulator's "first-non-null wins" semantics actually work.
-                raw_id = getattr(tc, "id", None)
-                raw_name = getattr(tc.function, "name", None) if tc.function else None
-                yield ToolCallDelta(
-                    index=tc.index,
-                    id=raw_id or None,
-                    name=raw_name or None,
-                    arguments_delta=(
-                        getattr(tc.function, "arguments", "") or "" if tc.function else ""
-                    ),
-                )
+                if not chunk.choices:
+                    continue
+                choice = chunk.choices[0]
+                delta = choice.delta
 
-            if choice.finish_reason is not None:
-                yield FinishEvent(finish_reason=choice.finish_reason)
-                if self._hooks is not None:
-                    self._hooks.fire(
-                        "PostModelCall",
-                        data={
-                            "model": self.model,
-                            "finish_reason": choice.finish_reason,
-                            "stream": True,
-                        },
-                        subject=self.model,
+                content = getattr(delta, "content", None)
+                if content:
+                    accumulated_text.append(content)
+                    yield TextDelta(text=content)
+
+                tool_calls = getattr(delta, "tool_calls", None) or []
+                for tc in tool_calls:
+                    # Qwen quirk: subsequent chunks for the same tool_call send
+                    # id="" and name=None instead of (id=None, name=None). We
+                    # normalize empty strings to None at this boundary so the
+                    # accumulator's "first-non-null wins" semantics actually work.
+                    raw_id = getattr(tc, "id", None)
+                    raw_name = getattr(tc.function, "name", None) if tc.function else None
+                    yield ToolCallDelta(
+                        index=tc.index,
+                        id=raw_id or None,
+                        name=raw_name or None,
+                        arguments_delta=(
+                            getattr(tc.function, "arguments", "") or "" if tc.function else ""
+                        ),
                     )
+
+                if choice.finish_reason is not None:
+                    finish_reason = choice.finish_reason
+                    yield FinishEvent(finish_reason=choice.finish_reason)
+        finally:
+            # Fire Post hook AFTER the whole stream is drained so the usage
+            # chunk (which arrives last) is included. finally also covers
+            # the case where the consumer abandoned the generator early.
+            if self._hooks is not None:
+                self._hooks.fire(
+                    "PostModelCall",
+                    data={
+                        "model": self.model,
+                        "content": "".join(accumulated_text) or None,
+                        "finish_reason": finish_reason,
+                        "usage": usage,
+                        "stream": True,
+                    },
+                    subject=self.model,
+                )

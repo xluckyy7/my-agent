@@ -91,41 +91,51 @@ def test_send_passes_base_url_and_key(mocker):
     fake_openai_cls.assert_called_once_with(api_key="my-key", base_url="https://example.com/v1")
 
 
-def test_debug_off_by_default(mocker, capsys, monkeypatch):
+def test_debug_off_by_default(mocker, caplog, monkeypatch):
+    import logging
+
     monkeypatch.delenv("MY_AGENT_DEBUG", raising=False)
     fake_openai = mocker.patch("my_agent.llm.client.openai.OpenAI")
     fake_openai.return_value.chat.completions.create.return_value = _fake_completion("hi")
 
     client = LLMClient(api_key="k", base_url="https://x", model="qwen-plus")
-    client.send([Message(role="user", content="hi")], tools=[], max_tokens=10)
+    with caplog.at_level(logging.DEBUG, logger="my_agent.llm.client"):
+        client.send([Message(role="user", content="hi")], tools=[], max_tokens=10)
 
-    err = capsys.readouterr().err
-    assert "REQUEST" not in err
-    assert "RESPONSE" not in err
+    msgs = " ".join(rec.message for rec in caplog.records)
+    assert "REQUEST" not in msgs
+    assert "RESPONSE" not in msgs
 
 
-def test_debug_on_dumps_request_and_response(mocker, capsys, monkeypatch):
+def test_debug_on_dumps_request_and_response(mocker, caplog, monkeypatch):
+    import logging
+
     monkeypatch.setenv("MY_AGENT_DEBUG", "1")
     fake_openai = mocker.patch("my_agent.llm.client.openai.OpenAI")
     fake_openai.return_value.chat.completions.create.return_value = _fake_completion("hi")
 
     client = LLMClient(api_key="k", base_url="https://x", model="qwen-plus")
-    client.send([Message(role="user", content="hi")], tools=[], max_tokens=10)
+    with caplog.at_level(logging.DEBUG, logger="my_agent.llm.client"):
+        client.send([Message(role="user", content="hi")], tools=[], max_tokens=10)
 
-    err = capsys.readouterr().err
-    assert "REQUEST" in err
-    assert "RESPONSE" in err
-    assert '"role": "user"' in err
-    assert '"content": "hi"' in err
+    msgs = " ".join(rec.message for rec in caplog.records)
+    assert "REQUEST" in msgs
+    assert "RESPONSE" in msgs
+    assert '"role": "user"' in msgs
+    assert '"content": "hi"' in msgs
 
 
-def test_debug_falsy_values_do_not_enable(mocker, capsys, monkeypatch):
+def test_debug_falsy_values_do_not_enable(mocker, caplog, monkeypatch):
+    import logging
+
     fake_openai = mocker.patch("my_agent.llm.client.openai.OpenAI")
     fake_openai.return_value.chat.completions.create.return_value = _fake_completion("hi")
 
     for val in ["", "0", "false", "FALSE", "no"]:
         monkeypatch.setenv("MY_AGENT_DEBUG", val)
+        caplog.clear()
         client = LLMClient(api_key="k", base_url="https://x", model="qwen-plus")
-        client.send([Message(role="user", content="hi")], tools=[], max_tokens=10)
-        err = capsys.readouterr().err
-        assert "REQUEST" not in err, f"debug should be off for value {val!r}"
+        with caplog.at_level(logging.DEBUG, logger="my_agent.llm.client"):
+            client.send([Message(role="user", content="hi")], tools=[], max_tokens=10)
+        msgs = " ".join(rec.message for rec in caplog.records)
+        assert "REQUEST" not in msgs, f"debug should be off for value {val!r}"

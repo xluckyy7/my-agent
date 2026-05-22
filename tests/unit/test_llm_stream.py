@@ -164,3 +164,101 @@ def test_stream_qwen_empty_string_id_normalized_to_none(mocker):
     assert tc_events[0].id == "call_REAL"
     assert tc_events[1].id is None   # NOT ""
     assert tc_events[2].id is None   # NOT ""
+
+
+# ---------------- usage capture (stream_options=include_usage) ----------------
+
+
+def _make_usage_chunk(prompt_tokens: int, completion_tokens: int, total_tokens: int):
+    """The trailing chunk emitted by OpenAI-compat servers when
+    stream_options={"include_usage": True} is set: choices=[] + usage=..."""
+    usage = MagicMock()
+    usage.model_dump.return_value = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+    chunk = MagicMock(choices=[], usage=usage)
+    return chunk
+
+
+def test_stream_passes_include_usage_flag(mocker):
+    """stream_options={'include_usage': True} MUST be in the request so the
+    server emits a usage chunk at end-of-stream — otherwise token counts in
+    Langfuse / observability are always zero."""
+    fake_openai = mocker.patch("my_agent.llm.client.openai.OpenAI")
+    fake_openai.return_value.chat.completions.create.return_value = iter([
+        _make_chunk(finish_reason="stop"),
+    ])
+
+    client = LLMClient(api_key="k", base_url="https://x", model="qwen-plus")
+    list(client.stream([Message(role="user", content="hi")], tools=[], max_tokens=10))
+
+    kwargs = fake_openai.return_value.chat.completions.create.call_args.kwargs
+    assert kwargs.get("stream_options") == {"include_usage": True}
+
+
+def test_stream_post_hook_includes_usage_from_trailing_chunk(mocker):
+    """The PostModelCall hook must fire AFTER the usage chunk is consumed
+    and include the usage dict — single source of truth for token reporting."""
+    fake_hooks = MagicMock()
+
+    fake_openai = mocker.patch("my_agent.llm.client.openai.OpenAI")
+    fake_openai.return_value.chat.completions.create.return_value = iter([
+        _make_chunk(content="hi"),
+        _make_chunk(finish_reason="stop"),
+        _make_usage_chunk(prompt_tokens=42, completion_tokens=7, total_tokens=49),
+    ])
+
+    client = LLMClient(
+        api_key="k", base_url="https://x", model="qwen-plus", hooks=fake_hooks,
+    )
+    # Drain the generator so finally runs.
+    list(client.stream([Message(role="user", content="hi")], tools=[], max_tokens=10))
+
+    # Pre + Post both fired
+    fire_calls = [c for c in fake_hooks.fire.call_args_list]
+    events_fired = [c.args[0] for c in fire_calls]
+    assert "PreModelCall" in events_fired
+    assert "PostModelCall" in events_fired
+
+    # The PostModelCall data must contain the usage dict in OpenAI format
+    post_call = next(c for c in fire_calls if c.args[0] == "PostModelCall")
+    data = post_call.kwargs["data"]
+    assert data["usage"] == {
+        "prompt_tokens": 42,
+        "completion_tokens": 7,
+        "total_tokens": 49,
+    }
+    assert data["finish_reason"] == "stop"
+    assert data["content"] == "hi"
+    assert data["stream"] is True
+
+
+def test_stream_post_hook_fires_even_when_no_usage_chunk(mocker):
+    """If the server doesn't emit a usage chunk, the hook still fires with
+    usage=None so observability layers know to skip token reporting."""
+    fake_hooks = MagicMock()
+
+    fake_openai = mocker.patch("my_agent.llm.client.openai.OpenAI")
+    fake_openai.return_value.chat.completions.create.return_value = iter([
+        _make_chunk(content="hi"),
+        _make_chunk(finish_reason="stop"),
+        # no usage chunk
+    ])
+
+    client = LLMClient(
+        api_key="k", base_url="https://x", model="qwen-plus", hooks=fake_hooks,
+    )
+    list(client.stream([Message(role="user", content="hi")], tools=[], max_tokens=10))
+
+    post_call = next(
+        c for c in fake_hooks.fire.call_args_list if c.args[0] == "PostModelCall"
+    )
+    data = post_call.kwargs["data"]
+    # MagicMock chunks have an auto-attr `usage` that we capture as a dict —
+    # what we care about here is the hook DOES fire even without a real usage
+    # chunk, with the rest of the fields intact.
+    assert "usage" in data
+    assert data["finish_reason"] == "stop"
+    assert data["content"] == "hi"

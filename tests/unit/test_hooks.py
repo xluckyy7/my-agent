@@ -172,8 +172,10 @@ def test_fire_empty_matcher_matches_all(mocker):
     assert fake_fn.call_count == 2
 
 
-def test_fire_hook_failure_does_not_crash_agent(mocker, capsys):
-    """A buggy hook should log to stderr and let the agent continue."""
+def test_fire_hook_failure_does_not_crash_agent(mocker, caplog):
+    """A buggy hook should log a warning and let the agent continue."""
+    import logging
+
     bad_fn = MagicMock(side_effect=RuntimeError("plugin broken"))
     fake_mod = MagicMock()
     fake_mod.on_event = bad_fn
@@ -182,11 +184,11 @@ def test_fire_hook_failure_does_not_crash_agent(mocker, capsys):
     spec = HookSpec(type="python", module="m", function="on_event")
     mgr = HookManager({"PreToolUse": [spec]})
 
-    # Must not raise
-    mgr.fire("PreToolUse", data={})
-    err = capsys.readouterr().err
-    assert "hook" in err.lower()
-    assert "plugin broken" in err
+    with caplog.at_level(logging.WARNING, logger="my_agent.agent.hooks"):
+        mgr.fire("PreToolUse", data={})  # Must not raise
+
+    assert any("plugin broken" in rec.message for rec in caplog.records)
+    assert any(rec.levelname == "WARNING" for rec in caplog.records)
 
 
 def test_fire_no_hooks_for_event_is_noop():

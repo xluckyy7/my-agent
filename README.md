@@ -60,7 +60,7 @@ MY_AGENT_DEBUG=1 python -m my_agent "你好"
 - **会话持久化** — `/save <path>` 落 JSON,`/load <path>` 恢复
 - **自动上下文压缩** — 接近 token 预算时,sliding window + LLM summarization 自动触发
 - **跨会话长期记忆** — `./AGENT.md`(项目)+ `~/.my-agent/memory/MEMORY.md`(用户) 启动时注入 system prompt;`remember` 工具让 agent 主动写
-- **Web UI** — `python -m my_agent.web` 起 FastAPI + SSE,ChatGPT 风格 sidebar + 主区
+- **Web UI** — `python -m my_agent.web` 起 FastAPI + SSE,ChatGPT 风格 sidebar + 主区,**session 持久化到 `~/.my-agent/web-sessions/`**(uvicorn 重启不丢)
 - **Hook 系统(Claude 风格)** — 7 事件 × 2 类型(command/python),配 `~/.my-agent/hooks.json` 接观测插件不动核心
 - **Langfuse 插件** — 出厂自带 observability 插件(可选 `pip install -e ".[langfuse]"`)
 - **协议守护** — Conversation 5 条不变量校验,提前抓住 API 400 类问题

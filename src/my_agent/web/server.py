@@ -9,6 +9,7 @@ from pathlib import Path
 
 import uvicorn
 
+from my_agent._logging import setup_logging
 from my_agent.agent.context import ContextManager
 from my_agent.agent.loop import AgentLoop
 from my_agent.agent.memory import (
@@ -24,6 +25,7 @@ from .app import build_app
 
 
 def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
+    setup_logging()
     cfg = load_config()
     home = Path(os.environ.get("HOME", str(Path.home())))
     cwd = Path.cwd()
@@ -56,9 +58,17 @@ def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
         project=load_project_memory(cwd),
         user=load_user_memory(home),
     )
-    app = build_app(loop_factory=loop_factory, system_prompt=system_prompt)
+    # Web sessions persist to ~/.my-agent/web-sessions/ so they survive
+    # uvicorn restarts. Each session is one JSON file there.
+    sessions_dir = home / ".my-agent" / "web-sessions"
+    app = build_app(
+        loop_factory=loop_factory,
+        system_prompt=system_prompt,
+        data_dir=sessions_dir,
+    )
 
     print(f"my-agent web ▸ http://{host}:{port}")
+    print(f"             sessions ▸ {sessions_dir}")
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 

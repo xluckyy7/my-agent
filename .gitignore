@@ -10,3 +10,7 @@ build/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Claude Code auto-commit hook log (per-machine, not for sharing)
+.claude/auto-commit.log
+.claude/settings.local.json

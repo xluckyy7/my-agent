@@ -65,13 +65,53 @@ def test_web_fetch_truncates_to_max_chars(mocker):
     assert "truncated" in out.lower() or "…" in out
 
 
-def test_web_fetch_non_200_returns_error(mocker):
+def test_web_fetch_4xx_returns_body_with_status_prefix(mocker):
+    """4xx responses must NOT raise — the body often contains the most
+    useful info (404 page suggestions, error JSON, "moved to..." links).
+    We return body prefixed with the status so the model can read both."""
     fake_get = mocker.patch("my_agent.tools.web.httpx.Client.get")
-    fake_get.return_value = _fake_response(status_code=404, text="Not Found")
+    fake_get.return_value = _fake_response(
+        status_code=404,
+        text="<html><body><p>Page not found. Try /docs/ instead.</p></body></html>",
+    )
 
-    # The tool itself raises; ToolRegistry.dispatch converts to is_error
-    with pytest.raises(Exception, match="404"):
-        web_fetch_tool.fn({"url": "https://example.com/missing"})
+    out = web_fetch_tool.fn({"url": "https://example.com/missing"})
+
+    # Status visible to model
+    assert "[HTTP 404]" in out
+    assert "https://example.com/missing" in out
+    # Body content preserved (model can act on the hint)
+    assert "Try /docs/ instead" in out
+
+
+def test_web_fetch_5xx_returns_body_with_status_prefix(mocker):
+    """Same treatment for 5xx — body often contains an error JSON the model
+    can use to construct a retry or report the issue."""
+    fake_get = mocker.patch("my_agent.tools.web.httpx.Client.get")
+    fake_get.return_value = _fake_response(
+        status_code=503,
+        text='{"error":"upstream_down","retry_after":30}',
+        headers={"content-type": "application/json"},
+    )
+
+    out = web_fetch_tool.fn({"url": "https://api.example.com/data"})
+
+    assert "[HTTP 503]" in out
+    assert "upstream_down" in out
+    assert "retry_after" in out
+
+
+def test_web_fetch_200_has_no_status_prefix(mocker):
+    """Sanity: 200 responses must not get the [HTTP NNN] prefix added."""
+    fake_get = mocker.patch("my_agent.tools.web.httpx.Client.get")
+    fake_get.return_value = _fake_response(
+        text="<html><body><p>Normal content here</p></body></html>"
+    )
+
+    out = web_fetch_tool.fn({"url": "https://example.com/"})
+
+    assert "[HTTP" not in out
+    assert "Normal content here" in out
 
 
 def test_web_fetch_passes_url_to_client(mocker):

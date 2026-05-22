@@ -15,7 +15,7 @@ def _stub_loop_yielding(events_per_call):
     loop = MagicMock()
     calls = iter(events_per_call)
 
-    def _gen(conv, prompt):
+    def _gen(conv, prompt, session_id="default"):
         events = next(calls)
         conv.append_user(prompt)
         text_accumulator = []
@@ -259,3 +259,28 @@ def test_delete_unknown_session_returns_404():
     client = TestClient(app)
     r = client.delete("/sessions/nonexistent")
     assert r.status_code == 404
+
+
+def test_chat_passes_session_id_to_loop():
+    """The web /chat handler must forward req.session_id to run_turn_stream
+    as a kwarg, so observability hooks (langfuse) see the real id, not
+    'default'."""
+    captured: dict = {}
+
+    def _gen(conv, prompt, session_id="default"):
+        captured["session_id"] = session_id
+        conv.append_user(prompt)
+        yield TurnTextDelta(text="ok")
+        conv.append_assistant(content="ok")
+
+    loop = MagicMock()
+    loop.run_turn_stream.side_effect = _gen
+
+    app = build_app(loop_factory=lambda: loop, system_prompt="s")
+    client = TestClient(app)
+    with client.stream(
+        "POST", "/chat", json={"prompt": "p", "session_id": "real-sid-42"}
+    ) as r:
+        list(r.iter_bytes())  # drain
+
+    assert captured["session_id"] == "real-sid-42"

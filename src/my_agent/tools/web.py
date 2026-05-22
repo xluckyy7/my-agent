@@ -55,16 +55,22 @@ def _fetch(args: dict) -> str:
     ) as client:
         resp = client.get(url)
 
-    if resp.status_code >= 400:
-        raise RuntimeError(f"HTTP {resp.status_code} from {url}")
-
     content_type = resp.headers.get("content-type", "").lower()
     body = resp.text
 
     if "html" in content_type:
         body = _extract_main_text(body)
 
-    return _truncate(body, max_chars)
+    body = _truncate(body, max_chars)
+
+    # Non-2xx: don't raise. The body often holds the most useful info
+    # (a 404 page's "did you mean" hints, an API error JSON, a Cloudflare
+    # challenge message). Surface both status AND body so the model can
+    # decide whether to retry, change URL, or report the failure.
+    if resp.status_code >= 400:
+        return f"[HTTP {resp.status_code}] {url}\n\n{body}"
+
+    return body
 
 
 web_fetch_tool = Tool(

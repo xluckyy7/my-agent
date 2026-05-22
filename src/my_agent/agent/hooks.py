@@ -38,13 +38,15 @@ raised — a broken hook must not crash the agent.
 
 import importlib
 import json
+import logging
 import re
 import subprocess
-import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 HOOK_EVENTS = (
     "SessionStart",       # agent boot, before any turn
@@ -184,10 +186,7 @@ class HookManager:
             try:
                 self._run_one(spec, event)
             except Exception as e:
-                print(
-                    f"[hook] {event_name} via {spec.type} failed: {e}",
-                    file=sys.stderr,
-                )
+                logger.warning("%s via %s failed: %s", event_name, spec.type, e)
 
     def _run_one(self, spec: HookSpec, event: HookEvent) -> None:
         if spec.type == "command":

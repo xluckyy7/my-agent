@@ -7,7 +7,8 @@ AgentLoop without spawning real LLMs.
 import json
 import uuid
 from dataclasses import asdict
-from typing import Callable
+from pathlib import Path
+from typing import Callable, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -441,10 +442,19 @@ $newChatBtn.addEventListener('click', () => { newChat(); });
 """
 
 
-def build_app(loop_factory: Callable, system_prompt: str) -> FastAPI:
-    """Construct the FastAPI app with given AgentLoop factory + system prompt."""
+def build_app(
+    loop_factory: Callable,
+    system_prompt: str,
+    data_dir: Optional[Path] = None,
+) -> FastAPI:
+    """Construct the FastAPI app with given AgentLoop factory + system prompt.
+
+    When `data_dir` is set, sessions are file-backed and survive restarts
+    (see SessionStore docstring). When None (the default used by tests),
+    sessions live in memory only.
+    """
     app = FastAPI(title="my-agent", version="1.0.0")
-    sessions = SessionStore(system_prompt=system_prompt)
+    sessions = SessionStore(system_prompt=system_prompt, data_dir=data_dir)
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
@@ -491,11 +501,21 @@ def build_app(loop_factory: Callable, system_prompt: str) -> FastAPI:
 
         def gen():
             try:
-                for ev in loop.run_turn_stream(conv, req.prompt):
+                # Pass session_id so hooks (e.g. langfuse plugin) can tag the
+                # trace with session.id — enables cross-turn aggregation in
+                # the dashboard's Sessions view.
+                for ev in loop.run_turn_stream(
+                    conv, req.prompt, session_id=req.session_id
+                ):
                     yield _sse(_event_to_dict(ev))
                 yield _sse({"type": "done"})
             except Exception as e:
                 yield _sse({"type": "error", "message": str(e)})
+            finally:
+                # Persist whatever messages got appended, even if the turn
+                # errored out mid-stream — partial state still beats losing
+                # the whole conversation on a restart.
+                sessions.persist(req.session_id)
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 

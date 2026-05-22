@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 # only deletes one byte and corrupts the display.
 import readline  # noqa: F401
 
+from my_agent._logging import setup_logging
 from my_agent.agent.context import ContextManager
 from my_agent.agent.conversation import Conversation
 from my_agent.agent.hooks import HookConfigError, HookManager, load_hooks
@@ -29,6 +31,12 @@ from my_agent.tools.shell import run_bash_tool
 from my_agent.tools.task_tool import make_task_tool
 from my_agent.tools.web import web_fetch_tool, web_search_tool
 
+# Borrow the leaf module loggers so output reads "my_agent.agent.hooks: ..."
+# instead of "my_agent.cli.main: ..." (preserves the original [hooks]/[mcp]
+# prefix semantics readers were used to).
+_hooks_logger = logging.getLogger("my_agent.agent.hooks")
+_mcp_logger = logging.getLogger("my_agent.mcp_layer")
+
 DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful coding assistant. "
     "Use the available tools to read files, write files, run shell commands, "
@@ -46,11 +54,11 @@ def build_hook_manager(home: Path) -> HookManager:
     try:
         specs = load_hooks(home)
     except HookConfigError as e:
-        print(f"[hooks] config error: {e}", file=sys.stderr)
+        _hooks_logger.error("config error: %s", e)
         specs = {}
     if specs:
         events_with_hooks = sorted(specs.keys())
-        print(f"[hooks] active on: {', '.join(events_with_hooks)}", file=sys.stderr)
+        _hooks_logger.info("active on: %s", ", ".join(events_with_hooks))
     return HookManager(specs)
 
 
@@ -71,7 +79,7 @@ def _collect_base_tools(home: Path) -> list[Tool]:
     try:
         mcp_specs = load_mcp_config(home)
     except MCPConfigError as e:
-        print(f"[mcp] config error: {e}", file=sys.stderr)
+        _mcp_logger.error("config error: %s", e)
         mcp_specs = []
     for spec in mcp_specs:
         for tool in build_mcp_tools(spec):
@@ -97,6 +105,7 @@ def build_registry(home: Path, client, hooks: HookManager | None = None) -> Tool
 
 
 def app() -> int:
+    setup_logging()
     cfg = load_config()
     home = Path(os.environ.get("HOME", str(Path.home())))
     cwd = Path.cwd()

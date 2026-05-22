@@ -42,8 +42,16 @@ class AgentLoop:
         if self.hooks is not None:
             self.hooks.fire(name, data=data, subject=subject)
 
-    def run_turn(self, conv: Conversation, user_input: str) -> str:
-        self._fire("UserPromptSubmit", data={"prompt": user_input, "stream": False})
+    def run_turn(
+        self,
+        conv: Conversation,
+        user_input: str,
+        session_id: str = "default",
+    ) -> str:
+        self._fire(
+            "UserPromptSubmit",
+            data={"prompt": user_input, "stream": False, "session_id": session_id},
+        )
         conv.append_user(user_input)
         schemas = self.tools.get_schemas()
         final_text = ""
@@ -75,16 +83,34 @@ class AgentLoop:
 
             # stop, length, content_filter, or anything else: terminate
             final_text = resp.content or ""
-            self._fire("Stop", data={"final_text": final_text, "stream": False})
+            self._fire(
+                "Stop",
+                data={
+                    "final_text": final_text,
+                    "stream": False,
+                    "session_id": session_id,
+                },
+            )
             return final_text
 
-        self._fire("Stop", data={"final_text": "", "stream": False, "reason": "budget_exceeded"})
+        self._fire(
+            "Stop",
+            data={
+                "final_text": "",
+                "stream": False,
+                "session_id": session_id,
+                "reason": "budget_exceeded",
+            },
+        )
         raise AgentBudgetExceeded(
             f"exceeded {self.max_iterations} iterations without finish_reason=stop"
         )
 
     def run_turn_stream(
-        self, conv: Conversation, user_input: str
+        self,
+        conv: Conversation,
+        user_input: str,
+        session_id: str = "default",
     ) -> Iterator[TurnEvent]:
         """Streaming variant of run_turn.
 
@@ -103,7 +129,10 @@ class AgentLoop:
                     case TurnToolStart(name=n): print(f"\n▸ {n}")
                     case TurnToolEnd(is_error=err): ...
         """
-        self._fire("UserPromptSubmit", data={"prompt": user_input, "stream": True})
+        self._fire(
+            "UserPromptSubmit",
+            data={"prompt": user_input, "stream": True, "session_id": session_id},
+        )
         conv.append_user(user_input)
         schemas = self.tools.get_schemas()
         accumulated_text: list[str] = []
@@ -160,7 +189,11 @@ class AgentLoop:
             # stop / length / content_filter / etc: terminate cleanly
             self._fire(
                 "Stop",
-                data={"final_text": "".join(accumulated_text), "stream": True},
+                data={
+                    "final_text": "".join(accumulated_text),
+                    "stream": True,
+                    "session_id": session_id,
+                },
             )
             return
 
@@ -169,6 +202,7 @@ class AgentLoop:
             data={
                 "final_text": "".join(accumulated_text),
                 "stream": True,
+                "session_id": session_id,
                 "reason": "budget_exceeded",
             },
         )
